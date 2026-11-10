@@ -1,0 +1,37 @@
+appId: app.cadre.desktop
+productName: Cadre
+copyright: Copyright © 2026
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!node_modules/**"
+extraResources:
+  - from: resources/server
+    to: server
+  - from: out/renderer
+    to: renderer
+asar: true
+npmRebuild: false
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  darkModeSupport: true
+  extendInfo:
+    NSUserNotificationAlertStyle: alert
+dmg:
+  contents:
+    - { x: 130, y: 220 }
+    - { x: 410, y: 220, type: link, path: /Applications }
+electronVersion: 38.8.6
+# Use the Electron already installed in node_modules: no download or checksum fetch at build time.
+electronDist: ../../node_modules/electron/dist

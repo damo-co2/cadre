@@ -1,0 +1,1 @@
+{ "extends": "../../tsconfig.base.json", "compilerOptions": { "rootDir": "src", "outDir": "dist", "types": ["node"] }, "include": ["src"], "references": [{ "path": "../../packages/shared" }, { "path": "../../packages/db" }, { "path": "../../packages/model-drivers" }, { "path": "../../packages/agent-runtime" }, { "path": "../../packages/sandbox" }] }

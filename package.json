@@ -1,0 +1,25 @@
+{
+  "name": "cadre",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Open, model-agnostic AI teammates: named Bots on a persistent computer, skills, routines, approvals.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/server & npm run dev --workspace=apps/desktop; wait",
+    "dev:server": "npm run dev --workspace=apps/server",
+    "dev:desktop": "npm run dev --workspace=apps/desktop",
+    "db:push": "npm run db:push --workspace=packages/db",
+    "typecheck": "tsc -b packages/shared packages/db packages/sandbox packages/model-drivers packages/agent-runtime apps/server && npm run typecheck --workspace=apps/desktop",
+    "build": "npm run build --workspace=apps/desktop",
+    "postinstall": "playwright install chromium",
+    "dist": "npm run dist --workspace=apps/desktop",
+    "dist:dir": "npm run dist:dir --workspace=apps/desktop",
+    "e2e": "python3 -I scripts/e2e.py"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

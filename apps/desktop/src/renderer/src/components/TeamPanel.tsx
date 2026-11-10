@@ -1,0 +1,247 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Maximize2, Plus, X } from "lucide-react";
+import type { Bot, Task } from "@grokbot/shared";
+import { frameBus } from "../lib/frames";
+import { useStore } from "../lib/store";
+import { cronToText } from "../lib/time";
+import { BotAvatar } from "./BotAvatar";
+
+/**
+ * Tidewater's right-hand panel: what the team is doing right now. A live view of a Bot's
+ * computer, the shared task board, and the routines that run next.
+ */
+export function TeamPanel({ bot, onClose, onOpenComputer, fullScreen = false }: { bot: Bot | null; onClose: () => void; onOpenComputer?: () => void; fullScreen?: boolean }) {
+  return (
+    <aside
+      className={`no-drag flex shrink-0 flex-col gap-5 overflow-y-auto bg-sunken p-4 ${fullScreen ? "h-full w-full pt-[max(1rem,env(safe-area-inset-top))]" : "w-[300px] border-l border-line"}`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="font-serif text-[22px] leading-none">Team pulse</span>
+        <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-elev hover:text-fg" title="Hide panel">
+          <X size={15} />
+        </button>
+      </div>
+      {bot && <LiveScreen bot={bot} onOpen={onOpenComputer} />}
+      <TaskBoard defaultOwner={bot} />
+      <NextUp />
+    </aside>
+  );
+}
+
+function LiveScreen({ bot, onOpen }: { bot: Bot; onOpen?: () => void }) {
+  const wsSend = useStore((s) => s.wsSend);
+  const screen = useStore((s) => s.screens[bot.id]);
+  const status = useStore((s) => s.botStatus[bot.id] ?? "idle");
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [hasFrame, setHasFrame] = useState(false);
+
+  useEffect(() => {
+    setHasFrame(false);
+    wsSend({ type: "screen.watch", botId: bot.id });
+    const img = new Image();
+    const unsubscribe = frameBus.subscribe(bot.id, (f) => {
+      img.onload = () => {
+        const c = canvas.current;
+        const ctx = c?.getContext("2d");
+        if (!c || !ctx) return;
+        if (c.width !== f.width || c.height !== f.height) {
+          c.width = f.width;
+          c.height = f.height;
+        }
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        setHasFrame(true);
+      };
+      img.src = `data:image/jpeg;base64,${f.data}`;
+    });
+    return () => {
+      unsubscribe();
+      wsSend({ type: "screen.unwatch", botId: bot.id });
+    };
+  }, [bot.id, wsSend]);
+
+  const live = screen?.status === "ready";
+  const host = screen?.url ? safeHost(screen.url) : null;
+  // A blank page streams as a white frame: show the hint instead.
+  const showFrame = hasFrame && !!host;
+  return (
+    <div className="overflow-hidden rounded-[10px] border border-line bg-elev">
+      <button onClick={onOpen} className="flex w-full items-center gap-2 border-b border-line px-2.5 py-1.5 text-left font-mono text-[12.5px] text-muted hover:text-fg" title="Open the full computer">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${live ? "tide-live bg-accent" : "bg-muted/40"}`} />
+        <span className="min-w-0 flex-1 truncate">
+          {bot.name}
+          {host ? ` · ${host}` : live ? " · blank" : " · computer off"}
+        </span>
+        {status === "working" && <span className="text-accent">working</span>}
+        <Maximize2 size={11} />
+      </button>
+      <div className="relative aspect-[16/10] bg-bg">
+        <canvas ref={canvas} className={`h-full w-full object-contain ${showFrame ? "" : "hidden"}`} />
+        {!showFrame && (
+          <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-[13px] text-muted">
+            {live && host ? "Waiting for the first frame…" : live ? `${bot.name}'s browser is open on a blank page.` : `${bot.name}'s computer starts when it needs the browser.`}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const STATUS_DOT: Record<Task["status"], string> = {
+  open: "bg-muted/50",
+  doing: "bg-accent tide-live",
+  blocked: "bg-signal",
+  done: "bg-accent",
+  dropped: "bg-muted/30",
+};
+
+function TaskBoard({ defaultOwner }: { defaultOwner: Bot | null }) {
+  const allTasks = useStore((s) => s.tasks);
+  const bots = useStore((s) => s.bots);
+  const spaceId = useStore((s) => s.spaceId);
+  // This space's work: tasks owned by or created by its Bots.
+  const tasks = useMemo(() => {
+    const ids = new Set(bots.filter((b) => !spaceId || b.spaceId === spaceId).map((b) => b.id));
+    return allTasks.filter((t) => (t.ownerBotId && ids.has(t.ownerBotId)) || (t.createdBy && ids.has(t.createdBy)) || (!t.ownerBotId && !t.createdBy));
+  }, [allTasks, bots, spaceId]);
+  const createTask = useStore((s) => s.createTask);
+  const updateTask = useStore((s) => s.updateTask);
+  const selectBot = useStore((s) => s.selectBot);
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Waiting on the user first, then blocked, doing, open; newest first within each.
+  const ordered = useMemo(() => {
+    const rank = (t: Task) => (t.ownerBotId === null ? 0 : t.status === "blocked" ? 1 : t.status === "doing" ? 2 : 3);
+    return [...tasks].sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt));
+  }, [tasks]);
+  const name = (id: string | null) => (id ? (bots.find((b) => b.id === id)?.name ?? "?") : "you");
+
+  const add = async () => {
+    if (!title.trim() || busy) return;
+    setBusy(true);
+    try {
+      await createTask({ title: title.trim(), ownerBotId: defaultOwner?.id ?? null });
+      setTitle("");
+      setAdding(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section>
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="label-mono">Task board{tasks.length ? ` · ${tasks.length}` : ""}</span>
+        <button onClick={() => setAdding((v) => !v)} className="flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-elev hover:text-fg" title="Add a task">
+          <Plus size={14} />
+        </button>
+      </div>
+      {adding && (
+        <div className="mb-2 rounded-[10px] border border-line bg-elev p-2">
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void add();
+              if (e.key === "Escape") setAdding(false);
+            }}
+            placeholder={defaultOwner ? `A task for ${defaultOwner.name}…` : "A task for you…"}
+            className="w-full bg-transparent text-[14.5px] outline-none placeholder:text-muted"
+          />
+          <div className="mt-1.5 flex items-center justify-between font-mono text-[12px] text-muted">
+            <span>{defaultOwner ? `${defaultOwner.name} starts on it right away` : "Owner: you"}</span>
+            <span>↵ add</span>
+          </div>
+        </div>
+      )}
+      {ordered.length === 0 ? (
+        <div className="rounded-[10px] border border-dashed border-line px-3 py-4 text-center text-[13.5px] text-muted">
+          Nothing open. Ask the Chief to delegate, or add a task.
+        </div>
+      ) : (
+        <div className="divide-y divide-line">
+          {ordered.slice(0, 12).map((t) => (
+            <div key={t.id} className="group flex items-start gap-2.5 py-2">
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${t.ownerBotId === null ? "bg-signal" : STATUS_DOT[t.status]}`} />
+              <button onClick={() => t.ownerBotId && void selectBot(t.ownerBotId)} className="min-w-0 flex-1 text-left" title={t.detail || t.title}>
+                <div className="line-clamp-2 text-[14px] leading-snug">{t.title}</div>
+                <div className="font-mono text-[12px] text-muted">
+                  {name(t.ownerBotId)} · {t.ownerBotId === null ? "waiting on you" : t.status}
+                </div>
+              </button>
+              <button
+                onClick={() => void updateTask(t.id, { status: "done" })}
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line text-muted opacity-0 hover:border-accent hover:text-accent group-hover:opacity-100"
+                title="Mark done"
+              >
+                <Check size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function NextUp() {
+  const routines = useStore((s) => s.routines);
+  const bots = useStore((s) => s.bots);
+  const spaceId = useStore((s) => s.spaceId);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const next = useMemo(
+    () =>
+      Object.values(routines)
+        .flat()
+        .filter((r) => r.enabled && r.nextRunAt && Date.parse(r.nextRunAt) > Date.now() - 60_000)
+        .filter((r) => !spaceId || bots.find((b) => b.id === r.botId)?.spaceId === spaceId)
+        .sort((a, b) => a.nextRunAt!.localeCompare(b.nextRunAt!))
+        .slice(0, 5),
+    [routines, bots, spaceId],
+  );
+  if (!next.length) return null;
+  return (
+    <section>
+      <div className="label-mono mb-1.5">Next up</div>
+      <div className="space-y-1.5">
+        {next.map((r) => {
+          const b = bots.find((x) => x.id === r.botId);
+          return (
+            <div key={r.id} className="flex items-center gap-2 text-[14px]" title={r.trigger.kind === "schedule" ? cronToText(r.trigger.cron) : r.name}>
+              {b && <BotAvatar name={b.name} color={b.avatarColor} shape={b.avatarShape} image={b.avatarImage} size={18} />}
+              <span className="min-w-0 flex-1 truncate">
+                <span className="font-medium">{b?.name ?? "Bot"}</span> <span className="text-muted">{r.name}</span>
+              </span>
+              <span className="shrink-0 font-mono text-[12.5px] text-muted">{whenLabel(r.nextRunAt!)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function whenLabel(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  const days = Math.round((new Date(d.toDateString()).getTime() - new Date(now.toDateString()).getTime()) / 86_400_000);
+  if (days === 0) return time;
+  if (days === 1) return `tmrw ${time}`;
+  if (days < 7) return `${d.toLocaleDateString([], { weekday: "short" }).toLowerCase()} ${time}`;
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function safeHost(url: string): string | null {
+  try {
+    return new URL(url).host || null;
+  } catch {
+    return null;
+  }
+}

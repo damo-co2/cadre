@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadre redesign options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #101012; color: #e9e9ea; font: 14px/1.5 "Inter Tight", system-ui, sans-serif; }
+  .chooser { position: sticky; top: 0; z-index: 50; display: flex; gap: 8px; align-items: center; padding: 14px 24px; background: rgba(16,16,18,.92); backdrop-filter: blur(10px); border-bottom: 1px solid #222; flex-wrap: wrap; }
+  .chooser h1 { font: 600 15px "Inter Tight", system-ui, sans-serif; margin-right: 12px; }
+  .chooser button { font: 500 13px "Inter Tight", system-ui, sans-serif; padding: 7px 14px; border-radius: 999px; border: 1px solid #333; background: #19191c; color: #ccc; cursor: pointer; }
+  .chooser button.on { background: #e9e9ea; color: #111; border-color: #e9e9ea; }
+  .chooser .hint { margin-left: auto; color: #888; font-size: 12px; }
+  section.opt { display: none; padding: 28px 24px 60px; }
+  section.opt.on { display: block; }
+  .intro { max-width: 1400px; margin: 0 auto 20px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; }
+  .intro h2 { font: 400 40px/1.1 "Instrument Serif", Georgia, serif; margin-bottom: 8px; }
+  .intro p { color: #aaa; max-width: 60ch; }
+  .intro ul { list-style: none; display: grid; gap: 6px; color: #bbb; font-size: 13px; }
+  .intro li b { color: #fff; font-weight: 600; }
+  .swatches { display: flex; gap: 6px; margin-top: 12px; }
+  .swatches span { width: 34px; height: 34px; border-radius: 8px; border: 1px solid #ffffff22; }
+  .stage { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 1fr 360px; gap: 24px; align-items: start; }
+  .frame { border-radius: 14px; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,.5); border: 1px solid #2a2a2e; }
+  .phone { width: 360px; height: 740px; border-radius: 44px; padding: 12px; background: #050505; box-shadow: 0 30px 80px rgba(0,0,0,.6); border: 1px solid #333; }
+  .phone > div { width: 100%; height: 100%; border-radius: 34px; overflow: hidden; position: relative; }
+  .cap { color: #888; font-size: 12px; margin: 10px 0 0; text-align: center; }
+  @media (max-width: 1100px) { .stage, .intro { grid-template-columns: 1fr; } .phone { margin: 0 auto; } }
+
+  /* =========================================================== A · TIDEWATER */
+  .A { --bg:#0a1316; --rail:#071012; --panel:#0e1a1e; --raise:#13242a; --line:#1d3138; --ink:#e6f1f2; --mute:#7f9aa0; --aqua:#6ccfdb; --aqua-d:#2b6f78; --amber:#f2b33d; --rose:#ef7a7a;
+    background: var(--bg); color: var(--ink); font: 13.5px/1.55 "Inter Tight", system-ui, sans-serif; height: 760px; display: grid; grid-template-columns: 64px 232px 1fr 300px; }
+  .A .rail { background: var(--rail); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 16px 0; gap: 10px; }
+  .A .rail .logo { width: 34px; height: 34px; border-radius: 50%; background: conic-gradient(from 200deg, var(--aqua), #2b6f78, var(--amber), var(--aqua)); margin-bottom: 14px; position: relative; }
+  .A .rail .logo::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--rail); }
+  .A .rail i { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; color: var(--mute); font-style: normal; font-size: 16px; }
+  .A .rail i.on { background: var(--raise); color: var(--aqua); box-shadow: inset 2px 0 0 var(--aqua); }
+  .A .roster { background: var(--panel); border-right: 1px solid var(--line); padding: 18px 12px; overflow: hidden; }
+  .A .roster h3 { font: 400 26px/1 "Instrument Serif", Georgia, serif; margin: 0 6px 4px; }
+  .A .roster .sub { color: var(--mute); font-size: 11.5px; margin: 0 6px 16px; }
+  .A .lab { font: 500 10.5px "JetBrains Mono", ui-monospace, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); margin: 14px 6px 6px; }
+  .A .bot { display: flex; gap: 10px; align-items: center; padding: 8px 8px; border-radius: 10px; }
+  .A .bot.on { background: var(--raise); }
+  .A .av { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font: 600 12px "Inter Tight", system-ui, sans-serif; color: #071012; position: relative; flex: none; }
+  .A .av .st { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--panel); }
+  .A .bot b { font-weight: 600; font-size: 13px; display: block; }
+  .A .bot small { color: var(--mute); font-size: 11.5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+  .A .chief-tag { font: 500 9.5px "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--aqua); border: 1px solid var(--aqua-d); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+  .A main { display: flex; flex-direction: column; min-width: 0; }
+  .A .head { height: 64px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 14px; padding: 0 24px; }
+  .A .head h4 { font: 400 24px "Instrument Serif", Georgia, serif; }
+  .A .head .role { color: var(--mute); font-size: 12px; }
+  .A .orbit { margin-left: auto; display: flex; align-items: center; }
+  .A .orbit .av { width: 24px; height: 24px; font-size: 10px; margin-left: -6px; border: 2px solid var(--bg); }
+  .A .orbit span { color: var(--mute); font: 11px "JetBrains Mono", ui-monospace, Menlo, monospace; margin-left: 10px; }
+  .A .feed { flex: 1; padding: 24px 32px; display: flex; flex-direction: column; gap: 18px; overflow: hidden; }
+  .A .you { align-self: flex-end; max-width: 70%; background: var(--aqua); color: #06191c; padding: 10px 14px; border-radius: 16px 16px 4px 16px; font-weight: 500; }
+  .A .msg { display: flex; gap: 12px; max-width: 82%; }
+  .A .msg .body { color: var(--ink); }
+  .A .msg .who { font-size: 12px; color: var(--mute); margin-bottom: 3px; }
+  .A .msg .who b { color: var(--ink); }
+  .A .event { border: 1px solid var(--line); background: linear-gradient(180deg, var(--raise), var(--panel)); border-radius: 12px; padding: 12px 14px; margin-top: 10px; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; }
+  .A .event .k { font: 500 10px "JetBrains Mono", ui-monospace, Menlo, monospace; letter-spacing: .12em; color: var(--aqua); text-transform: uppercase; }
+  .A .event .t { font-weight: 600; }
+  .A .event .s { color: var(--mute); font-size: 12px; }
+  .A .pill { font: 500 11px "JetBrains Mono", ui-monospace, Menlo, monospace; padding: 3px 8px; border-radius: 999px; }
+  .A .pill.done { background: #6ccfdb22; color: var(--aqua); }
+  .A .pill.wait { background: #f2b33d22; color: var(--amber); }
+  .A table { border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
+  .A td { padding: 4px 14px 4px 0; border-bottom: 1px solid var(--line); }
+  .A td.n { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--aqua); }
+  .A .composer { margin: 0 32px 22px; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; color: var(--mute); }
+  .A .composer .send { margin-left: auto; width: 32px; height: 32px; border-radius: 50%; background: var(--aqua); color: #06191c; display: grid; place-items: center; font-weight: 700; }
+  .A .composer kbd { font: 11px "JetBrains Mono", ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  .A aside { background: var(--panel); border-left: 1px solid var(--line); padding: 18px 16px; display: flex; flex-direction: column; gap: 18px; overflow: hidden; }
+  .A .screen { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+  .A .screen .bar { background: var(--raise); font: 11px "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--mute); padding: 6px 10px; display: flex; gap: 6px; align-items: center; }
+  .A .screen .bar .live { width: 6px; height: 6px; border-radius: 50%; background: var(--aqua); box-shadow: 0 0 8px var(--aqua); }
+  .A .screen .pg { height: 130px; background: #f4f4f2; padding: 12px; color: #222; font-size: 11px; }
+  .A .screen .pg .ln { height: 7px; background: #ddd; border-radius: 3px; margin: 6px 0; }
+  .A .tasks .row { display: grid; grid-template-columns: 8px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .A .tasks .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .A .tasks small { color: var(--mute); font: 11px "JetBrains Mono", ui-monospace, Menlo, monospace; }
+  .A .next { font: 12px "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--mute); display: grid; gap: 6px; }
+  .A .next b { color: var(--ink); font-weight: 500; }
+  /* A phone */
+  .Am { background: var(--bg); color: var(--ink); font: 13.5px/1.5 "Inter Tight", system-ui, sans-serif; height: 100%; display: flex; flex-direction: column; }
+  .Am .top { padding: 46px 18px 12px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
+  .Am .top h4 { font: 400 24px "Instrument Serif", Georgia, serif; }
+  .Am .top .burger { font-size: 18px; color: var(--mute); }
+  .Am .feed { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+  .Am .chips { display: flex; gap: 6px; padding: 0 16px 10px; overflow: hidden; }
+  .Am .chips span { font: 500 11px "JetBrains Mono", ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--mute); white-space: nowrap; }
+  .Am .composer { margin: 0 12px 28px; }
+
+  /* =========================================================== B · ATRIUM */
+  .B { --bg:#f5f2ea; --paper:#fbf9f4; --ink:#14181a; --mute:#6b6f6c; --line:#e3ddcf; --aqua:#2aa3b3; --wash:#6ccfdb; --amber:#d9951c; --leaf:#4f8a5b;
+    background: var(--bg); color: var(--ink); font: 14px/1.55 "IBM Plex Sans", system-ui, sans-serif; height: 760px; display: grid; grid-template-rows: 56px 1fr; }
+  .B .bar { display: flex; align-items: center; gap: 18px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--paper); }
+  .B .brand { font: 700 17px "Space Grotesk", system-ui, sans-serif; letter-spacing: -.02em; display: flex; align-items: center; gap: 8px; }
+  .B .brand i { width: 18px; height: 18px; border-radius: 5px; background: var(--ink); display: inline-block; position: relative; }
+  .B .brand i::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--wash); }
+  .B nav { display: flex; gap: 4px; }
+  .B nav a { font: 500 13px "Space Grotesk", system-ui, sans-serif; padding: 6px 12px; border-radius: 8px; color: var(--mute); }
+  .B nav a.on { background: var(--ink); color: var(--paper); }
+  .B .search { margin-left: auto; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 6px 12px; color: var(--mute); font-size: 12.5px; width: 260px; }
+  .B .body { display: grid; grid-template-columns: 1fr 440px; min-height: 0; }
+  .B .hub { position: relative; padding: 24px 28px; display: grid; grid-template-rows: auto 1fr auto; gap: 16px; min-height: 0; }
+  .B .hub h2 { font: 600 30px/1.1 "Space Grotesk", system-ui, sans-serif; letter-spacing: -.03em; }
+  .B .hub h2 em { font-style: normal; background: linear-gradient(transparent 62%, #6ccfdb88 62%); }
+  .B .hub p.lede { color: var(--mute); margin-top: 4px; }
+  .B .org { position: relative; border: 1px solid var(--line); border-radius: 18px; background: radial-gradient(circle at 50% 46%, #ffffff 0, var(--paper) 40%, var(--bg) 100%); overflow: hidden; }
+  .B .org svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .B .node { position: absolute; transform: translate(-50%, -50%); text-align: center; width: 120px; }
+  .B .node .av { width: 52px; height: 52px; margin: 0 auto 6px; border-radius: 16px; display: grid; place-items: center; color: #fff; font: 700 18px "Space Grotesk", system-ui, sans-serif; box-shadow: 0 6px 18px rgba(20,24,26,.12); position: relative; }
+  .B .node.chief .av { width: 78px; height: 78px; border-radius: 24px; font-size: 26px; background: var(--ink); color: var(--wash); outline: 6px solid #6ccfdb44; }
+  .B .node b { font: 600 13px "Space Grotesk", system-ui, sans-serif; display: block; }
+  .B .node small { color: var(--mute); font-size: 11.5px; }
+  .B .node .busy { position: absolute; top: -4px; right: -4px; background: var(--amber); color: #fff; font: 600 9.5px "Space Grotesk", system-ui, sans-serif; border-radius: 6px; padding: 1px 5px; }
+  .B .node .new { position: absolute; top: -4px; right: -10px; background: var(--leaf); color: #fff; font: 600 9.5px "Space Grotesk", system-ui, sans-serif; border-radius: 6px; padding: 1px 5px; }
+  .B .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .B .col { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+  .B .col h5 { font: 600 11px "Space Grotesk", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .B .card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-bottom: 6px; }
+  .B .card small { color: var(--mute); display: block; font-size: 11px; }
+  .B .chat { border-left: 1px solid var(--line); background: var(--paper); display: flex; flex-direction: column; min-height: 0; }
+  .B .chat .ch { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+  .B .chat .ch .av { width: 34px; height: 34px; border-radius: 11px; background: var(--ink); color: var(--wash); display: grid; place-items: center; font: 700 14px "Space Grotesk", system-ui, sans-serif; }
+  .B .chat .ch b { font: 600 15px "Space Grotesk", system-ui, sans-serif; display: block; }
+  .B .chat .ch small { color: var(--mute); font-size: 12px; }
+  .B .feed { flex: 1; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+  .B .you { align-self: flex-end; background: var(--ink); color: var(--paper); padding: 9px 13px; border-radius: 14px 14px 3px 14px; max-width: 85%; }
+  .B .them { max-width: 92%; }
+  .B .them .note { margin-top: 8px; border-left: 3px solid var(--wash); background: #6ccfdb1a; padding: 8px 10px; border-radius: 0 8px 8px 0; font-size: 12.5px; }
+  .B .them .note b { font-family: "Space Grotesk", system-ui, sans-serif; }
+  .B .them .price { font: 700 28px "Space Grotesk", system-ui, sans-serif; letter-spacing: -.03em; margin-top: 6px; }
+  .B .composer { margin: 0 16px 16px; border: 1.5px solid var(--ink); border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; color: var(--mute); background: #fff; }
+  .B .composer .send { margin-left: auto; background: var(--ink); color: var(--paper); border-radius: 8px; padding: 5px 12px; font: 600 12px "Space Grotesk", system-ui, sans-serif; }
+  .Bm { background: var(--bg); color: var(--ink); font: 14px/1.5 "IBM Plex Sans", system-ui, sans-serif; height: 100%; display: flex; flex-direction: column; }
+  .Bm .top { padding: 48px 18px 12px; background: var(--paper); border-bottom: 1px solid var(--line); }
+  .Bm .ring { display: flex; gap: 10px; padding: 14px 18px; overflow: hidden; border-bottom: 1px solid var(--line); background: var(--paper); }
+  .Bm .ring div { text-align: center; font: 600 11px "Space Grotesk", system-ui, sans-serif; }
+  .Bm .ring .av { width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; color: #fff; font-size: 16px; margin-bottom: 4px; }
+  .Bm .tabbar { display: grid; grid-template-columns: repeat(4,1fr); padding: 10px 6px 26px; border-top: 1px solid var(--line); background: var(--paper); font: 600 11px "Space Grotesk", system-ui, sans-serif; text-align: center; color: var(--mute); }
+  .Bm .tabbar .on { color: var(--ink); }
+
+  /* =========================================================== C · SWITCHBOARD */
+  .C { --bg:#0c0c0d; --p:#121214; --p2:#18181b; --line:#26262a; --ink:#ededed; --mute:#8a8a90; --aqua:#6ccfdb; --amber:#f2b33d; --red:#ff6b5a;
+    background: var(--bg); color: var(--ink); font: 13px/1.5 "JetBrains Mono", ui-monospace, Menlo, monospace; height: 760px; display: grid; grid-template-rows: 44px 1fr 28px; }
+  .C .cmd { display: flex; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+  .C .cmd .brand { font: 700 13px "Space Grotesk", system-ui, sans-serif; letter-spacing: .2em; }
+  .C .cmd .k { flex: 1; max-width: 520px; margin: 0 auto; border: 1px solid var(--line); background: var(--p); border-radius: 6px; padding: 5px 10px; color: var(--mute); display: flex; justify-content: space-between; }
+  .C .cmd .k span:last-child { color: #555; }
+  .C .grid { display: grid; grid-template-columns: 300px 1fr 340px; min-height: 0; }
+  .C .tiles { border-right: 1px solid var(--line); padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start; }
+  .C .tile { background: var(--p); border: 1px solid var(--line); border-radius: 6px; padding: 10px; position: relative; min-height: 92px; }
+  .C .tile.on { border-color: var(--aqua); box-shadow: 0 0 0 1px var(--aqua) inset; }
+  .C .tile.wide { grid-column: span 2; min-height: 0; display: flex; gap: 12px; align-items: center; }
+  .C .tile .n { font: 600 14px "Space Grotesk", system-ui, sans-serif; }
+  .C .tile .r { color: var(--mute); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
+  .C .tile .s { position: absolute; top: 10px; right: 10px; font-size: 10px; }
+  .C .tile .bars { display: flex; gap: 2px; align-items: flex-end; height: 18px; margin-top: 10px; }
+  .C .tile .bars i { width: 4px; background: #333; display: block; }
+  .C .tile .bars i.a { background: var(--aqua); }
+  .C .live { color: var(--aqua); }
+  .C .busy { color: var(--amber); }
+  .C .idle { color: var(--mute); }
+  .C .center { display: flex; flex-direction: column; min-width: 0; }
+  .C .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .C .tabs span { padding: 10px 16px; color: var(--mute); border-right: 1px solid var(--line); font-size: 12px; }
+  .C .tabs span.on { color: var(--ink); background: var(--p); box-shadow: inset 0 -2px 0 var(--aqua); }
+  .C .log { flex: 1; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+  .C .ln { display: grid; grid-template-columns: 52px 74px 1fr; gap: 10px; }
+  .C .ln .t { color: #555; }
+  .C .ln .w { font-weight: 700; }
+  .C .ln .w.u { color: var(--ink); }
+  .C .ln .w.c { color: var(--aqua); }
+  .C .ln .w.h { color: var(--amber); }
+  .C .ln .w.s { color: var(--mute); }
+  .C .ln .x { color: #d5d5d5; }
+  .C .tool { color: var(--mute); font-size: 11.5px; }
+  .C .tool b { color: var(--aqua); font-weight: 500; }
+  .C .box { border: 1px solid var(--line); background: var(--p); border-radius: 6px; padding: 10px 12px; margin-top: 6px; }
+  .C .box .h { color: var(--aqua); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 4px; }
+  .C .prompt { border-top: 1px solid var(--line); padding: 12px 20px; display: flex; gap: 10px; color: var(--mute); }
+  .C .prompt .car { color: var(--aqua); }
+  .C .prompt .cur { width: 8px; height: 16px; background: var(--aqua); display: inline-block; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .C .right { border-left: 1px solid var(--line); display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+  .C .scr { padding: 12px; border-bottom: 1px solid var(--line); }
+  .C .scr .pg { height: 150px; background: #f3f3f3; border-radius: 4px; padding: 10px; }
+  .C .scr .pg i { display: block; height: 6px; background: #d9d9d9; margin: 6px 0; border-radius: 2px; }
+  .C .scr .cap2 { display: flex; justify-content: space-between; color: var(--mute); font-size: 11px; margin-top: 6px; }
+  .C .q { padding: 12px; overflow: hidden; }
+  .C .q h6 { font: 500 10.5px "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--mute); letter-spacing: .12em; text-transform: uppercase; margin: 6px 0 8px; }
+  .C .q .r { display: grid; grid-template-columns: 1fr auto; padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 12px; }
+  .C .appr { border: 1px solid var(--amber); border-radius: 6px; padding: 10px; color: var(--ink); margin-bottom: 10px; }
+  .C .appr .btns { display: flex; gap: 6px; margin-top: 8px; }
+  .C .appr .btns span { border: 1px solid var(--line); padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+  .C .appr .btns span.y { background: var(--amber); color: #000; border-color: var(--amber); }
+  .C .status { border-top: 1px solid var(--line); display: flex; gap: 18px; align-items: center; padding: 0 16px; color: var(--mute); font-size: 11px; }
+  .Cm { background: var(--bg); color: var(--ink); font: 12.5px/1.5 "JetBrains Mono", ui-monospace, Menlo, monospace; height: 100%; display: flex; flex-direction: column; }
+  .Cm .top { padding: 46px 14px 10px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+  .Cm .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
+  .Cm .strip div { background: var(--p); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="chooser">
+  <h1>Cadre · pick a direction</h1>
+  <button data-o="a" class="on">A · Tidewater</button>
+  <button data-o="b">B · Atrium</button>
+  <button data-o="c">C · Switchboard</button>
+  <span class="hint">Desktop on the left, phone on the right. Same content in all three.</span>
+</div>
+
+<!-- ======================================================= A -->
+<section class="opt on" id="a">
+  <div class="intro">
+    <div>
+      <h2>A · Tidewater</h2>
+      <p>Deep teal-black like water at night, one aqua current running through it, amber reserved for anything waiting on you. Editorial serif names give each Bot a presence; mono numerals keep data honest. Layout runs on a 1 : 2 : 8 rhythm: icon rail, team roster, then a wide stage with the live team panel beside it.</p>
+      <div class="swatches"><span style="background:#0a1316"></span><span style="background:#13242a"></span><span style="background:#6ccfdb"></span><span style="background:#f2b33d"></span><span style="background:#e6f1f2"></span></div>
+    </div>
+    <ul>
+      <li><b>Type:</b> Instrument Serif for names and titles, Inter Tight for text, JetBrains Mono for numbers and labels.</li>
+      <li><b>Feel:</b> calm, premium, quiet until something needs you.</li>
+      <li><b>Chief:</b> hexagon mark, "Chief" tag, team orbit in its header.</li>
+      <li><b>Events:</b> hires and task results show as cards inside the chat.</li>
+      <li><b>Right panel:</b> live computer, task board, next routines.</li>
+    </ul>
+  </div>
+  <div class="stage">
+    <div class="frame"><div class="A">
+      <div class="rail">
+        <div class="logo"></div>
+        <i class="on">◎</i><i>☰</i><i>⟳</i><i>⌘</i><i>◫</i><div style="flex:1"></div><i>⚙</i>
+      </div>
+      <div class="roster">
+        <h3>Team</h3><div class="sub">5 Bots · 3 working</div>
+        <div class="lab">Lead</div>
+        <div class="bot on"><div class="av" style="background:#6ccfdb">C<span class="st" style="background:#6ccfdb"></span></div><div><b>Chief <span class="chief-tag">CHIEF</span></b><small>Reporting the Kindle price…</small></div></div>
+        <div class="lab">Specialists</div>
+        <div class="bot"><div class="av" style="background:#22c55e">H<span class="st" style="background:#f2b33d"></span></div><div><b>Hawk</b><small>Deal Hunter · new hire</small></div></div>
+        <div class="bot"><div class="av" style="background:#f59e0b">S<span class="st" style="background:#6ccfdb"></span></div><div><b>Scout</b><small>Market Scout · digest 8:00</small></div></div>
+        <div class="bot"><div class="av" style="background:#f97316">M<span class="st" style="background:#3a5259"></span></div><div><b>Muse</b><small>Content Studio · idle</small></div></div>
+        <div class="bot"><div class="av" style="background:#ef7a7a">C<span class="st" style="background:#3a5259"></span></div><div><b>Contra</b><small>Devil's Advocate · idle</small></div></div>
+        <div class="lab">Groups</div>
+        <div class="bot"><div class="av" style="background:#13242a;color:#6ccfdb">◎</div><div><b>Founder Mode</b><small>Contra: "Biggest risk is…"</small></div></div>
+      </div>
+      <main>
+        <div class="head"><h4>Chief</h4><span class="role">Chief of Staff · Claude</span>
+          <div class="orbit"><div class="av" style="background:#22c55e">H</div><div class="av" style="background:#f59e0b">S</div><div class="av" style="background:#f97316">M</div><div class="av" style="background:#ef7a7a">C</div><span>4 reports</span></div>
+        </div>
+        <div class="feed">
+          <div class="you">We need someone who tracks prices. Hire whoever fits and have them check the Kindle Paperwhite on Amazon.</div>
+          <div class="msg"><div class="av" style="background:#6ccfdb">C</div><div class="body"><div class="who"><b>Chief</b> · 12:21</div>Nobody on the team covers price tracking, so I hired a Deal Hunter and gave it the Kindle check as its first task.
+            <div class="event"><span class="k">Hired</span><div><div class="t">Hawk · Deal Hunter</div><div class="s">Price checks 9:00 and 21:00 · never buys</div></div><span class="pill done">on team</span></div>
+          </div></div>
+          <div class="msg"><div class="av" style="background:#6ccfdb">C</div><div class="body"><div class="who"><b>Chief</b> · 12:27 · from Hawk's task</div>Done. The base Paperwhite is <b>$199.99</b> on amazon.com and not on sale.
+            <table><tr><td>Paperwhite 16GB, ads</td><td class="n">$199.99</td></tr><tr><td>Paperwhite 16GB, no ads</td><td class="n">$219.99</td></tr><tr><td>Signature Edition 32GB</td><td class="n">$254.99</td></tr></table>
+          </div></div>
+        </div>
+        <div class="composer">Message Chief, or type / for skills and @ for a Bot <kbd>⌘K</kbd><span class="send">↑</span></div>
+      </main>
+      <aside>
+        <div class="screen"><div class="bar"><span class="live"></span>Hawk · amazon.com</div><div class="pg"><b>Kindle Paperwhite</b><div class="ln" style="width:80%"></div><div class="ln" style="width:55%"></div><div style="font:700 18px 'Inter Tight', system-ui, sans-serif;margin-top:10px">$199.99</div><div class="ln" style="width:70%"></div></div></div>
+        <div class="tasks"><div class="lab" style="margin:0 0 4px">Task board</div>
+          <div class="row"><span class="dot" style="background:#6ccfdb"></span><div>Kindle price check<br><small>Hawk · done</small></div><span class="pill done">done</span></div>
+          <div class="row"><span class="dot" style="background:#f2b33d"></span><div>Send 3 posts for voice<br><small>you · Muse is waiting</small></div><span class="pill wait">you</span></div>
+          <div class="row"><span class="dot" style="background:#3a5259"></span><div>Competitor watchlist<br><small>Scout · open</small></div><span class="pill" style="color:#7f9aa0">open</span></div>
+        </div>
+        <div class="next"><div class="lab" style="margin:0">Next up</div><div><b>Hawk</b> price check · 21:00</div><div><b>Chief</b> morning brief · 07:00</div><div><b>Scout</b> digest · 08:00</div></div>
+      </aside>
+    </div></div>
+    <div><div class="phone"><div class="Am A" style="display:flex;height:100%">
+      <div class="top"><span class="burger">☰</span><div class="av" style="background:#6ccfdb;width:30px;height:30px">C</div><div><h4>Chief</h4></div><span style="margin-left:auto;color:#6ccfdb;font:11px 'JetBrains Mono', ui-monospace, Menlo, monospace">● live</span></div>
+      <div class="feed">
+        <div class="you" style="max-width:85%">Hire someone to track prices and check the Kindle Paperwhite.</div>
+        <div class="msg" style="max-width:100%"><div class="body">I hired <b>Hawk</b>, a Deal Hunter.<div class="event" style="grid-template-columns:1fr auto"><div><div class="t">Hawk · Deal Hunter</div><div class="s">9:00 and 21:00</div></div><span class="pill done">hired</span></div></div></div>
+        <div class="msg" style="max-width:100%"><div class="body">Base Paperwhite: <b style="color:#6ccfdb;font-family:JetBrains Mono">$199.99</b>, no sale.</div></div>
+      </div>
+      <div class="chips"><span>Approve 1</span><span>Tasks 3</span><span>Computer</span></div>
+      <div class="composer" style="margin:0 12px 28px">Message Chief<span class="send">↑</span></div>
+    </div></div><p class="cap">Phone, over the QR link</p></div>
+  </div>
+</section>
+
+<!-- ======================================================= B -->
+<section class="opt" id="b">
+  <div class="intro">
+    <div>
+      <h2>B · Atrium</h2>
+      <p>A bright, paper-and-ink workspace where the team itself is the home screen. Chief sits at the centre of a live org chart, the specialists orbit it, and lines light up as work moves between them. The task board sits underneath like a wall of sticky notes; the chat with Chief is always open on the right.</p>
+      <div class="swatches"><span style="background:#f5f2ea"></span><span style="background:#fbf9f4"></span><span style="background:#14181a"></span><span style="background:#6ccfdb"></span><span style="background:#d9951c"></span></div>
+    </div>
+    <ul>
+      <li><b>Type:</b> Space Grotesk headings, IBM Plex Sans for text.</li>
+      <li><b>Feel:</b> daylight studio, organised, a team you can see.</li>
+      <li><b>Chief:</b> the biggest node in the middle of everything.</li>
+      <li><b>Events:</b> new hires appear as new nodes with a "new" tag.</li>
+      <li><b>Phone:</b> team ring on top, tab bar for Chat / Team / Tasks / Me.</li>
+    </ul>
+  </div>
+  <div class="stage">
+    <div class="frame"><div class="B">
+      <div class="bar"><div class="brand"><i></i>Cadre</div><nav><a class="on">Team</a><a>Tasks</a><a>Routines</a><a>Library</a></nav><div class="search">Search or ask Chief…  ⌘K</div></div>
+      <div class="body">
+        <div class="hub">
+          <div><h2>Good afternoon. <em>3 Bots working</em>, 1 thing needs you.</h2><p class="lede">Chief hired Hawk 6 minutes ago. Muse is waiting on your writing samples.</p></div>
+          <div class="org">
+            <svg viewBox="0 0 800 330" preserveAspectRatio="none"><g stroke="#d6cfbf" stroke-width="1.5" fill="none"><path d="M400 150 L150 80"/><path d="M400 150 L650 80"/><path d="M400 150 L170 260"/><path d="M400 150 L630 260"/></g><path d="M400 150 L650 80" stroke="#2aa3b3" stroke-width="3" stroke-dasharray="6 6"/><circle cx="400" cy="150" r="120" fill="none" stroke="#e8e2d4" stroke-dasharray="2 6"/></svg>
+            <div class="node chief" style="left:50%;top:45%"><div class="av">C</div><b>Chief</b><small>Chief of Staff</small></div>
+            <div class="node" style="left:19%;top:24%"><div class="av" style="background:#f59e0b">S<span class="busy">8:00</span></div><b>Scout</b><small>Market Scout</small></div>
+            <div class="node" style="left:81%;top:24%"><div class="av" style="background:#22c55e">H<span class="new">NEW</span></div><b>Hawk</b><small>Deal Hunter · on amazon.com</small></div>
+            <div class="node" style="left:21%;top:79%"><div class="av" style="background:#f97316">M</div><b>Muse</b><small>Content Studio</small></div>
+            <div class="node" style="left:79%;top:79%"><div class="av" style="background:#ef4444">C</div><b>Contra</b><small>Devil's Advocate</small></div>
+          </div>
+          <div class="board">
+            <div class="col"><h5>Open <span>1</span></h5><div class="card">Competitor watchlist<small>Scout</small></div></div>
+            <div class="col"><h5>Doing <span>0</span></h5></div>
+            <div class="col" style="border-color:#d9951c"><h5 style="color:#d9951c">Needs you <span>1</span></h5><div class="card">Send 3 posts for voice<small>for Muse</small></div></div>
+            <div class="col"><h5>Done <span>1</span></h5><div class="card">Kindle price check<small>Hawk · $199.99</small></div></div>
+          </div>
+        </div>
+        <div class="chat">
+          <div class="ch"><div class="av">C</div><div><b>Chief</b><small>Chief of Staff · knows the whole team</small></div></div>
+          <div class="feed">
+            <div class="you">We need someone who tracks prices. Hire whoever fits and check the Kindle Paperwhite.</div>
+            <div class="them">Nobody covered price tracking, so I hired <b>Hawk</b>, a Deal Hunter. Its first task was the Kindle check.<div class="note"><b>Hired · Hawk</b><br>Checks prices at 9:00 and 21:00. Never buys.</div></div>
+            <div class="them">Hawk is done. The base Paperwhite on amazon.com:<div class="price">$199.99</div><span style="color:#6b6f6c;font-size:12.5px">No sale. No-ads model $219.99, Signature $254.99.</span></div>
+          </div>
+          <div class="composer">Ask Chief anything<span class="send">Send</span></div>
+        </div>
+      </div>
+    </div></div>
+    <div><div class="phone"><div class="Bm B" style="display:flex;height:100%;grid-template-rows:none">
+      <div class="top"><div style="font:600 22px 'Space Grotesk', system-ui, sans-serif;letter-spacing:-.03em">Chief</div><small style="color:#6b6f6c">3 working · 1 needs you</small></div>
+      <div class="ring"><div><div class="av" style="background:#14181a;color:#6ccfdb">C</div>Chief</div><div><div class="av" style="background:#22c55e">H</div>Hawk</div><div><div class="av" style="background:#f59e0b">S</div>Scout</div><div><div class="av" style="background:#f97316">M</div>Muse</div><div><div class="av" style="background:#ef4444">C</div>Contra</div></div>
+      <div class="feed" style="flex:1;padding:16px;display:flex;flex-direction:column;gap:12px">
+        <div class="you">Hire someone to track prices.</div>
+        <div class="them">Hired <b>Hawk</b>, a Deal Hunter.<div class="note"><b>Kindle Paperwhite</b> · $199.99, no sale</div></div>
+      </div>
+      <div class="composer">Ask Chief<span class="send">Send</span></div>
+      <div class="tabbar"><span class="on">Chat</span><span>Team</span><span>Tasks</span><span>Me</span></div>
+    </div></div><p class="cap">Phone, over the QR link</p></div>
+  </div>
+</section>
+
+<!-- ======================================================= C -->
+<section class="opt" id="c">
+  <div class="intro">
+    <div>
+      <h2>C · Switchboard</h2>
+      <p>Mission control for people who like to see the wiring. Everything is monospace on a strict 8-pixel grid. Bots are live status tiles with activity sparklines; the conversation reads like a clean event log with tool calls inline; approvals sit in a queue on the right in amber. Keyboard first: one command bar does everything.</p>
+      <div class="swatches"><span style="background:#0c0c0d"></span><span style="background:#18181b"></span><span style="background:#6ccfdb"></span><span style="background:#f2b33d"></span><span style="background:#ededed"></span></div>
+    </div>
+    <ul>
+      <li><b>Type:</b> JetBrains Mono everywhere, Space Grotesk for Bot names.</li>
+      <li><b>Feel:</b> dense, fast, every action visible.</li>
+      <li><b>Chief:</b> the wide tile on top of the board.</li>
+      <li><b>Events:</b> log lines with timestamps; tool calls shown inline.</li>
+      <li><b>Status bar:</b> routines due, model in use, phone connected.</li>
+    </ul>
+  </div>
+  <div class="stage">
+    <div class="frame"><div class="C">
+      <div class="cmd"><span class="brand">CADRE</span><div class="k"><span>› ask chief, run a skill, jump to a bot…</span><span>⌘K</span></div><span class="live">● 3 live</span></div>
+      <div class="grid">
+        <div class="tiles">
+          <div class="tile wide on"><div><div class="n">Chief</div><div class="r">chief of staff</div></div><div style="margin-left:auto;text-align:right"><div class="live">● reporting</div><div class="r">4 reports · 2 tasks</div></div></div>
+          <div class="tile"><span class="s busy">● busy</span><div class="n">Hawk</div><div class="r">deal hunter</div><div class="bars"><i style="height:4px"></i><i style="height:6px"></i><i class="a" style="height:16px"></i><i class="a" style="height:12px"></i><i class="a" style="height:18px"></i></div></div>
+          <div class="tile"><span class="s live">● live</span><div class="n">Scout</div><div class="r">market scout</div><div class="bars"><i class="a" style="height:10px"></i><i style="height:5px"></i><i class="a" style="height:14px"></i><i style="height:3px"></i><i class="a" style="height:8px"></i></div></div>
+          <div class="tile"><span class="s idle">○ idle</span><div class="n">Muse</div><div class="r">content studio</div><div class="bars"><i style="height:3px"></i><i style="height:6px"></i><i style="height:2px"></i><i style="height:4px"></i><i style="height:3px"></i></div></div>
+          <div class="tile"><span class="s idle">○ idle</span><div class="n">Contra</div><div class="r">devil's advocate</div><div class="bars"><i style="height:2px"></i><i style="height:3px"></i><i style="height:8px"></i><i style="height:2px"></i><i style="height:2px"></i></div></div>
+          <div class="tile wide" style="border-style:dashed;color:#8a8a90">+ hire from template</div>
+        </div>
+        <div class="center">
+          <div class="tabs"><span class="on">chief</span><span>founder-mode</span><span>hawk</span><span>+</span></div>
+          <div class="log">
+            <div class="ln"><span class="t">12:21</span><span class="w u">you</span><span class="x">We need someone who tracks prices. Hire whoever fits and check the Kindle Paperwhite.</span></div>
+            <div class="ln"><span class="t">12:21</span><span class="w c">chief</span><span class="x"><div class="tool">→ <b>team_overview</b> · → <b>bot_hire</b>(deal-hunter, first_task)</div>Nobody covered price tracking. Hired Hawk with the Kindle check as its first task.</span></div>
+            <div class="ln"><span class="t">12:22</span><span class="w s">system</span><span class="x" style="color:#8a8a90">hawk joined · routines: price check 09:00, 21:00</span></div>
+            <div class="ln"><span class="t">12:26</span><span class="w h">hawk</span><span class="x"><div class="tool">→ <b>browser_navigate</b> amazon.com · → <b>browser_get_text</b> · → <b>task_update</b> done</div>Task 8afae577 done.</span></div>
+            <div class="ln"><span class="t">12:27</span><span class="w c">chief</span><span class="x">Base Paperwhite is $199.99 on amazon.com, no sale.<div class="box"><div class="h">result</div>paperwhite 16gb ads ........ $199.99<br>paperwhite 16gb no ads ..... $219.99<br>signature 32gb ............. $254.99</div></span></div>
+          </div>
+          <div class="prompt"><span class="car">›</span><span>message chief</span><span class="cur"></span></div>
+        </div>
+        <div class="right">
+          <div class="scr"><div class="pg"><b style="color:#222;font:600 12px 'Space Grotesk', system-ui, sans-serif">Kindle Paperwhite</b><i style="width:80%"></i><i style="width:50%"></i><b style="color:#111;font:700 18px 'Space Grotesk', system-ui, sans-serif">$199.99</b><i style="width:70%"></i></div><div class="cap2"><span class="live">● hawk · live</span><span>take control</span></div></div>
+          <div class="q">
+            <h6>Needs you · 1</h6>
+            <div class="appr">Muse wants 3 of your posts to learn your voice.<div class="btns"><span class="y">answer</span><span>later</span></div></div>
+            <h6>Routines · next</h6>
+            <div class="r"><span>hawk · price check</span><span class="busy">21:00</span></div>
+            <div class="r"><span>chief · morning brief</span><span>07:00</span></div>
+            <div class="r"><span>scout · digest</span><span>08:00</span></div>
+            <h6>Board</h6>
+            <div class="r"><span>kindle price check</span><span class="live">done</span></div>
+            <div class="r"><span>competitor watchlist</span><span>open</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="status"><span class="live">● server ok</span><span>model claude</span><span>phone connected</span><span style="margin-left:auto">zoom 100%</span></div>
+    </div></div>
+    <div><div class="phone"><div class="Cm C" style="display:flex;height:100%">
+      <div class="top"><b style="font:700 13px 'Space Grotesk', system-ui, sans-serif;letter-spacing:.2em">CADRE</b><span class="live">● 3 live</span></div>
+      <div class="strip"><div><b>Chief</b><br><span class="live">●</span> rep</div><div><b>Hawk</b><br><span class="busy">●</span> busy</div><div><b>Scout</b><br><span class="live">●</span> live</div></div>
+      <div class="log" style="padding:14px;gap:10px;display:flex;flex-direction:column;flex:1">
+        <div><span class="t" style="color:#555">12:21</span> <b>you</b> hire a price tracker</div>
+        <div><span class="t" style="color:#555">12:21</span> <b class="live">chief</b> hired Hawk</div>
+        <div><span class="t" style="color:#555">12:27</span> <b class="live">chief</b> Paperwhite $199.99, no sale</div>
+      </div>
+      <div class="prompt" style="padding:12px 14px 30px"><span class="car">›</span><span>message chief</span><span class="cur"></span></div>
+    </div></div><p class="cap">Phone, over the QR link</p></div>
+  </div>
+</section>
+
+<script>
+  const btns = document.querySelectorAll(".chooser button");
+  btns.forEach((b) => b.addEventListener("click", () => {
+    btns.forEach((x) => x.classList.toggle("on", x === b));
+    document.querySelectorAll("section.opt").forEach((s) => s.classList.toggle("on", s.id === b.dataset.o));
+    window.scrollTo({ top: 0 });
+  }));
+</script>
+</body>
+</html>

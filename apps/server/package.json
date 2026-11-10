@@ -1,0 +1,32 @@
+{
+  "name": "@grokbot/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -b",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@grokbot/agent-runtime": "*",
+    "@grokbot/db": "*",
+    "@grokbot/model-drivers": "*",
+    "@grokbot/sandbox": "*",
+    "@grokbot/shared": "*",
+    "@hono/mcp": "latest",
+    "@hono/node-server": "^1.19.0",
+    "@hono/node-ws": "^1.2.0",
+    "@modelcontextprotocol/sdk": "latest",
+    "hono": "^4.9.0",
+    "qrcode": "^1.5.4",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
