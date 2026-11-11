@@ -2,13 +2,12 @@ name: Build packages
 
 # Builds Cadre for Mac (Apple silicon .dmg + .zip), Windows (x64 installer .exe) and
 # Linux (x64 .AppImage + .deb).
-# Every run uploads the packages as workflow artifacts; pushing a tag like v0.2.0 also
-# attaches them to a GitHub release for that tag.
+# Runs only for releases: pushing a tag like v0.2.0 builds every package and attaches
+# them to a GitHub release for that tag. "Run workflow" in Actions builds them without
+# a release (download them from the run's artifacts).
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
 
 permissions:
