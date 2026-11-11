@@ -3,6 +3,7 @@ import type {
   ProfileFact,
   Space,
   Task,
+  PullRequestLink,
   AccessInfo,
   AppConnector,
   AppSettings,
@@ -189,6 +190,9 @@ export const api = {
     delete: (id: string) => req<void>(`/api/routines/${id}`, { method: "DELETE" }),
     test: (id: string) => req<RoutineRun>(`/api/routines/${id}/test`, { method: "POST" }),
     runs: (id: string) => req<RoutineRun[]>(`/api/routines/${id}/runs`),
+  },
+  pullRequests: {
+    list: () => req<PullRequestLink[]>("/api/pull-requests"),
   },
   tasks: {
     list: (all = false) => req<Task[]>(`/api/tasks${all ? "?all=1" : ""}`),

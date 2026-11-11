@@ -17,7 +17,10 @@
     "postinstall": "playwright install chromium",
     "dist": "npm run dist --workspace=apps/desktop",
     "dist:dir": "npm run dist:dir --workspace=apps/desktop",
-    "e2e": "python3 -I scripts/e2e.py"
+    "e2e": "python3 -I scripts/e2e.py",
+    "dist:mac": "npm run dist:mac --workspace=apps/desktop",
+    "dist:linux": "npm run dist:linux --workspace=apps/desktop",
+    "dist:win": "npm run dist:win --workspace=apps/desktop"
   },
   "engines": {
     "node": ">=22"

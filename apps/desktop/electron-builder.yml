@@ -22,16 +22,49 @@ mac:
       arch: [arm64]
     - target: zip
       arch: [arm64]
-  identity: null
+  # "-" = ad-hoc signature: no Apple certificate, but a valid signature so Apple silicon Macs
+  # will open a downloaded copy (an unsigned app shows "Cadre is damaged").
+  identity: "-"
   hardenedRuntime: false
   gatekeeperAssess: false
   darkModeSupport: true
   extendInfo:
     NSUserNotificationAlertStyle: alert
+linux:
+  category: Office
+  icon: build/icon.png
+  executableName: cadre
+  maintainer: Cadre
+  synopsis: AI teammates on your own computer
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+appImage:
+  artifactName: Cadre-${version}-${arch}.${ext}
+deb:
+  # Default name uses the npm package name (@grokbot/desktop), which is not a valid file name.
+  artifactName: cadre_${version}_${arch}.${ext}
+  depends: [libnotify4, libxtst6, libnss3, libsecret-1-0]
+win:
+  icon: build/icon.png
+  executableName: Cadre
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  artifactName: Cadre-Setup-${version}-${arch}.${ext}
+  # Installs for the current user only (no admin prompt); lets people pick the folder.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
 dmg:
   contents:
     - { x: 130, y: 220 }
     - { x: 410, y: 220, type: link, path: /Applications }
 electronVersion: 38.8.6
-# Use the Electron already installed in node_modules: no download or checksum fetch at build time.
+# Use the Electron already installed in node_modules (the one for the OS doing the build):
+# no download or checksum fetch at build time.
 electronDist: ../../node_modules/electron/dist

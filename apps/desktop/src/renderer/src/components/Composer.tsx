@@ -112,7 +112,10 @@ export function Composer({
       setError((err as Error).message);
     } finally {
       setBusy(false);
-      requestAnimationFrame(() => ref.current?.focus());
+      // Only if nothing else took focus meanwhile (the user clicked elsewhere on purpose).
+      requestAnimationFrame(() => {
+        if (document.activeElement === document.body || document.activeElement === ref.current) ref.current?.focus();
+      });
     }
   };
 
@@ -219,8 +222,11 @@ export function Composer({
           onPaste={onPaste}
           placeholder={dragging ? "Drop files to attach" : (placeholder ?? `Message ${botName}…  (@ to mention, / for skills)`)}
           rows={1}
-          disabled={busy}
-          className="block w-full min-w-0 resize-none bg-transparent px-2 py-1.5 text-[16px] outline-none placeholder:text-muted disabled:opacity-60 md:text-[15px]"
+          // readOnly, not disabled, while sending: a disabled box drops the cursor, and putting it back
+          // afterwards is unreliable while replies are streaming in.
+          readOnly={busy}
+          aria-busy={busy}
+          className={`block w-full min-w-0 resize-none bg-transparent px-2 py-1.5 text-[16px] outline-none placeholder:text-muted md:text-[15px] ${busy ? "opacity-60" : ""}`}
         />
         {error && <div className="px-2 pb-1 text-xs text-danger">{error}</div>}
         <div className="flex items-center justify-between px-1 pt-1">

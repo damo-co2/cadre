@@ -36,7 +36,8 @@ writeFileSync(
 const sh = (cmd) => execSync(cmd, { cwd: out, stdio: "inherit" });
 sh("npm install --omit=dev --no-audit --no-fund --ignore-scripts");
 // better-sqlite3's prebuilt binary is for system Node; rebuild it for Electron.
-sh(`"${resolve(root, "node_modules/.bin/electron-rebuild")}" -v ${electronVersion} -m . -o better-sqlite3 -f`);
+// Run its CLI with node directly: node_modules/.bin shims differ on Windows.
+sh(`"${process.execPath}" "${resolve(root, "node_modules/@electron/rebuild/lib/cli.js")}" -v ${electronVersion} -m . -o better-sqlite3 -f`);
 // electron-builder's extraResources filter drops any "node_modules" folder, so ship it as "deps"
 // and point the packaged server at it with NODE_PATH (see apps/desktop/src/main/index.ts).
 rmSync(resolve(out, "deps"), { recursive: true, force: true });

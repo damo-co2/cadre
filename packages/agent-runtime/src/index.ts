@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "nod
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Bot, Conversation, Message, MessagePart, Routine, RoutineRun, ServerEvent } from "@grokbot/shared";
-import { MAX_BOT_CHAIN, MAX_GROUP_BOTS, MIN_GROUP_BOTS, makeModelRef, parseMentions, parseModelRef } from "@grokbot/shared";
+import { MAX_GROUP_BOTS, MIN_GROUP_BOTS, makeModelRef, parseMentions, parseModelRef } from "@grokbot/shared";
 import { ApprovalGate, review } from "./approvals.js";
 import { AutomationTools, RoutineScheduler, type RuntimeToolSpec } from "./automation.js";
 import { ConnectorManager } from "./connectors.js";
@@ -587,9 +587,6 @@ export class AgentRuntime {
       }
     }
     const conv = store.conversations.directForBot(target.id);
-    const depth = (this.chain.get(conv.id) ?? 0) + 1;
-    if (depth > MAX_BOT_CHAIN) return fail(`${target.name} has already been woken ${MAX_BOT_CHAIN} times without the user; stop and report to the user instead.`);
-    this.chain.set(conv.id, depth);
     const msg = store.messages.create({
       conversationId: conv.id,
       role: "system",
@@ -624,9 +621,6 @@ export class AgentRuntime {
     const msg = store.messages.create({ conversationId: conv.id, role: "system", botId: answerer.id, content: body });
     this.opts.emit({ type: "message.created", message: msg });
     if (conv.kind === "group") return this.passOn(conv, answerer, [asker.id], msg.id);
-    const depth = (this.chain.get(conv.id) ?? 0) + 1;
-    if (depth > MAX_BOT_CHAIN) return; // the answer is there for the user; no more Bot-to-Bot turns
-    this.chain.set(conv.id, depth);
     this.wake({ source: "bot", conversationId: conv.id, botId: asker.id, messageId: msg.id });
   }
 

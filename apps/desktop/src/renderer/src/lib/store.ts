@@ -104,6 +104,8 @@ interface State {
   mobileComputerOpen: boolean;
   /** Team task board (open work; closed tasks are dropped from the panel). */
   tasks: Task[];
+  /** Goes up when a finished reply mentions a GitHub pull request (Team pulse refetches its PR list). */
+  prRev: number;
   /** Right-hand panel on desktop: the Team panel, the full computer, or nothing. Remembered per device. */
   rightPanel: "team" | "computer" | null;
   /** Phone: the Team panel as a full-screen overlay. */
@@ -199,6 +201,7 @@ export function botsInSpace(bots: Bot[], spaceId: string | null): Bot[] {
 
 export const useStore = create<State>((set, get) => ({
   tasks: [],
+  prRev: 0,
   rightPanel: savedRightPanel(),
   mobileTeamOpen: false,
   connected: false,
@@ -646,6 +649,7 @@ export const useStore = create<State>((set, get) => ({
         break;
       }
       case "message.done":
+        if (/github\.com\/[^\s"]+\/pull\/\d/.test(e.message.content + JSON.stringify(e.message.parts ?? []))) set({ prRev: s.prRev + 1 });
         if (e.message.conversationId === s.conversation?.id) {
           set({ messages: upsert(s.messages, e.message) });
         } else {

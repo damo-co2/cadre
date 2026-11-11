@@ -10,7 +10,10 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "dist": "electron-vite build && node ../../scripts/bundle-server.mjs && electron-builder --mac --config electron-builder.yml",
-    "dist:dir": "electron-vite build && node ../../scripts/bundle-server.mjs && electron-builder --mac --dir --config electron-builder.yml"
+    "dist:dir": "electron-vite build && node ../../scripts/bundle-server.mjs && electron-builder --mac --dir --config electron-builder.yml",
+    "dist:mac": "electron-vite build && node ../../scripts/bundle-server.mjs && electron-builder --mac --config electron-builder.yml",
+    "dist:linux": "electron-vite build && node ../../scripts/bundle-server.mjs && electron-builder --linux --config electron-builder.yml",
+    "dist:win": "electron-vite build && node ../../scripts/bundle-server.mjs && electron-builder --win --config electron-builder.yml"
   },
   "dependencies": {
     "@fontsource-variable/inter-tight": "^5.3.0",
@@ -38,5 +41,6 @@
     "vite": "^7.1.0"
   },
   "author": "Damien Koh",
-  "productName": "Cadre"
+  "productName": "Cadre",
+  "homepage": "https://github.com/damo-co2/cadre"
 }

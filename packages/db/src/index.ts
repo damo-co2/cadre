@@ -33,8 +33,9 @@ import type {
   UpdateBotInput,
   ProfileCategory,
   ProfileFact,
+  PullRequestLink,
 } from "@grokbot/shared";
-import { DEFAULT_SETTINGS, PROFILE_CATEGORIES, ROUTINE_RUN_HISTORY } from "@grokbot/shared";
+import { DEFAULT_SETTINGS, findPullRequestUrls, PROFILE_CATEGORIES, ROUTINE_RUN_HISTORY } from "@grokbot/shared";
 import * as schema from "./schema.js";
 import { Secrets } from "./secrets.js";
 
@@ -1243,6 +1244,32 @@ export class MessageRepo {
     if (patch.error !== undefined) set.error = patch.error;
     this.db.update(schema.messages).set(set).where(eq(schema.messages.id, id)).run();
     return this.get(id);
+  }
+
+  /** GitHub pull requests Bots mentioned since `sinceIso` (in their replies or tool output), most recent first. */
+  pullRequests(sinceIso: string): PullRequestLink[] {
+    const rows = this.db
+      .select({ botId: schema.messages.botId, content: schema.messages.content, parts: schema.messages.parts, createdAt: schema.messages.createdAt })
+      .from(schema.messages)
+      .where(
+        and(
+          gt(schema.messages.createdAt, sinceIso),
+          sql`${schema.messages.botId} is not null`,
+          or(sql`${schema.messages.content} like '%github.com/%/pull/%'`, sql`${schema.messages.parts} like '%github.com/%/pull/%'`),
+        ),
+      )
+      .orderBy(asc(schema.messages.createdAt))
+      .all();
+    const prs = new Map<string, PullRequestLink>();
+    for (const r of rows) {
+      for (const pr of findPullRequestUrls(`${r.content}\n${r.parts}`)) {
+        const key = pr.url.toLowerCase();
+        const seen = prs.get(key);
+        if (seen) Object.assign(seen, { botId: r.botId, lastSeenAt: r.createdAt, mentions: seen.mentions + 1 });
+        else prs.set(key, { ...pr, botId: r.botId, firstSeenAt: r.createdAt, lastSeenAt: r.createdAt, mentions: 1 });
+      }
+    }
+    return [...prs.values()].sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
   }
 }
 

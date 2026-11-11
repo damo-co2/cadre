@@ -201,8 +201,6 @@ export const sendMessageSchema = z.object({
 
 export const MIN_GROUP_BOTS = 2;
 export const MAX_GROUP_BOTS = 10;
-/** How many Bot-initiated wakes a single user message may trigger in a group before the chain stops. */
-export const MAX_BOT_CHAIN = 6;
 
 export const createGroupSchema = z.object({
   botIds: z.array(z.string()).min(MIN_GROUP_BOTS).max(MAX_GROUP_BOTS),
@@ -424,6 +422,32 @@ export const createSquadSchema = z.object({
 
 export const TASK_STATUSES = ["open", "doing", "blocked", "done", "dropped"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
+/** A GitHub pull request a Bot mentioned (opened, pushed to, or reported on); shown on Team pulse. */
+export interface PullRequestLink {
+  url: string;
+  /** "owner/repo" */
+  repo: string;
+  number: number;
+  /** Bot that mentioned it most recently. */
+  botId: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  mentions: number;
+}
+
+const PR_URL = /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/g;
+
+/** GitHub pull request links in some text, as canonical URLs (…/pull/170/files → …/pull/170). */
+export function findPullRequestUrls(text: string): { url: string; repo: string; number: number }[] {
+  const out = new Map<string, { url: string; repo: string; number: number }>();
+  for (const m of text.matchAll(PR_URL)) {
+    const repo = `${m[1]}/${m[2]}`;
+    const url = `https://github.com/${repo}/pull/${m[3]}`;
+    out.set(url.toLowerCase(), { url, repo, number: Number(m[3]) });
+  }
+  return [...out.values()];
+}
+
 export const TASK_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 

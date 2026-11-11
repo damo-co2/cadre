@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Maximize2, Plus, X } from "lucide-react";
-import type { Bot, Task } from "@grokbot/shared";
+import { Check, GitPullRequest, Maximize2, Plus, X } from "lucide-react";
+import type { Bot, PullRequestLink, Task } from "@grokbot/shared";
+import { api } from "../lib/api";
 import { frameBus } from "../lib/frames";
 import { useStore } from "../lib/store";
 import { cronToText } from "../lib/time";
@@ -8,7 +9,7 @@ import { BotAvatar } from "./BotAvatar";
 
 /**
  * Tidewater's right-hand panel: what the team is doing right now. A live view of a Bot's
- * computer, the shared task board, and the routines that run next.
+ * computer, the shared task board, the pull requests Bots are working on, and the routines that run next.
  */
 export function TeamPanel({ bot, onClose, onOpenComputer, fullScreen = false }: { bot: Bot | null; onClose: () => void; onOpenComputer?: () => void; fullScreen?: boolean }) {
   return (
@@ -23,6 +24,7 @@ export function TeamPanel({ bot, onClose, onOpenComputer, fullScreen = false }: 
       </div>
       {bot && <LiveScreen bot={bot} onOpen={onOpenComputer} />}
       <TaskBoard defaultOwner={bot} />
+      <PullRequests />
       <NextUp />
     </aside>
   );
@@ -184,6 +186,99 @@ function TaskBoard({ defaultOwner }: { defaultOwner: Bot | null }) {
       )}
     </section>
   );
+}
+
+const HIDDEN_PRS_KEY = "cadre.hiddenPullRequests";
+
+/** url -> when it was hidden. A PR mentioned again after that shows up again. */
+function loadHiddenPrs(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(HIDDEN_PRS_KEY) ?? "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+/** GitHub pull requests this space's Bots mentioned in the last two weeks; click to open on GitHub. */
+function PullRequests() {
+  const bots = useStore((s) => s.bots);
+  const spaceId = useStore((s) => s.spaceId);
+  const prRev = useStore((s) => s.prRev);
+  const [prs, setPrs] = useState<PullRequestLink[]>([]);
+  const [hidden, setHidden] = useState<Record<string, string>>(loadHiddenPrs);
+
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      api.pullRequests
+        .list()
+        .then((list) => live && setPrs(list))
+        .catch(() => {
+          /* older server: no PR list */
+        });
+    void load();
+    const t = setInterval(load, 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [prRev]);
+
+  const shown = useMemo(() => {
+    const ids = new Set(bots.filter((b) => !spaceId || b.spaceId === spaceId).map((b) => b.id));
+    return prs.filter((p) => (!p.botId || ids.has(p.botId)) && !(hidden[p.url] && hidden[p.url] >= p.lastSeenAt)).slice(0, 8);
+  }, [prs, bots, spaceId, hidden]);
+
+  const hide = (p: PullRequestLink) => {
+    const next = { ...hidden, [p.url]: new Date().toISOString() };
+    setHidden(next);
+    try {
+      localStorage.setItem(HIDDEN_PRS_KEY, JSON.stringify(next));
+    } catch {
+      /* not remembered; fine */
+    }
+  };
+
+  if (!shown.length) return null;
+  return (
+    <section>
+      <div className="label-mono mb-1.5">Pull requests · {shown.length}</div>
+      <div className="divide-y divide-line">
+        {shown.map((p) => {
+          const b = bots.find((x) => x.id === p.botId);
+          return (
+            <div key={p.url} className="group flex items-start gap-2.5 py-2">
+              <GitPullRequest size={14} className="mt-0.5 shrink-0 text-accent" />
+              <a href={p.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 text-left" title={`Open ${p.url}`}>
+                <div className="truncate text-[14px] leading-snug underline-offset-2 group-hover:underline">
+                  {p.repo.split("/")[1]} #{p.number}
+                </div>
+                <div className="truncate font-mono text-[12px] text-muted">
+                  {b?.name ?? "a Bot"} · {agoLabel(p.lastSeenAt)}
+                </div>
+              </a>
+              <button
+                onClick={() => hide(p)}
+                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted opacity-0 hover:bg-elev hover:text-fg group-hover:opacity-100"
+                title="Hide (it comes back if a Bot mentions it again)"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function agoLabel(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 function NextUp() {

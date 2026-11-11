@@ -1,0 +1,23 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "tiny-text",
+        "value": "*",
+        "files": [
+          "site/index.html"
+        ],
+        "createdAt": "2026-11-11T03:59:49.230Z",
+        "reason": "Claude: the 10.5-11.5px text is inside the scaled-down app window mock (a picture of the UI), not body copy; real body text is 15-20px"
+      },
+      {
+        "rule": "overused-font",
+        "value": "instrument serif",
+        "createdAt": "2026-11-11T04:01:54.659Z",
+        "reason": "Claude: Instrument Serif is Cadre's own display face (apps/desktop/src/renderer/src/index.css --font-serif); the site matches the product"
+      }
+    ]
+  }
+}
