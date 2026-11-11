@@ -9,11 +9,12 @@ import { PROVIDERS } from "../providers.js";
  * Drives OpenCode (`opencode run --format json`): its free models plus any provider the user
  * signed in to inside OpenCode (NVIDIA, Ollama Cloud, …).
  *
- * Isolation: XDG_CONFIG_HOME points at a private folder so the user's own OpenCode config (their
- * MCP servers, e.g. Home Assistant) never loads; sign-ins live in the data folder and still work.
- * The whole config for the turn comes in OPENCODE_CONFIG_CONTENT: Cadre's MCP server, and a
- * "cadre" agent whose prompt is Cadre's system prompt (re-sent every turn, so it stays fresh) with
- * OpenCode's shell/edit/write tools off, so changes go only through Cadre's tools and Auto Review.
+ * Isolation: XDG_CONFIG_HOME (1.x) and OPENCODE_CONFIG_DIR (2.x) point at a private folder so the
+ * user's own OpenCode config (their MCP servers, e.g. Home Assistant) never loads; sign-ins live
+ * in the data folder and still work. The whole config for the turn comes in
+ * OPENCODE_CONFIG_CONTENT: Cadre's MCP server, and a "cadre" agent whose prompt is Cadre's system
+ * prompt (re-sent every turn, so it stays fresh) with OpenCode's shell/edit/write tools off, so
+ * changes go only through Cadre's tools and Auto Review.
  */
 export class OpenCodeDriver implements ModelDriver {
   readonly provider = "opencode" as const;
@@ -27,44 +28,48 @@ export class OpenCodeDriver implements ModelDriver {
   async listModels() {
     const now = Date.now();
     if (modelCache && now - modelCache.at < 10 * 60_000) return modelCache.models;
-    const r = await execText("opencode", ["models", "--verbose"], 60_000, isolatedEnv());
-    const models = r.code === 0 ? parseModels(r.out) : [];
+    const env = isolatedEnv();
+    // OpenCode 1.x prints model metadata with --verbose; 2.x dropped the flag and prints just
+    // "provider/model" lines. Try verbose first so older installs keep their nicer labels.
+    const verbose = await execText("opencode", ["models", "--verbose"], 60_000, env);
+    let models = verbose.code === 0 ? parseModels(verbose.out) : [];
+    if (!models.length) {
+      const plain = await execText("opencode", ["models"], 60_000, env);
+      models = plain.code === 0 ? parseModelIds(plain.out) : [];
+    }
     const list = models.length ? models : PROVIDERS.opencode.curatedModels.map((id) => ({ id }));
     if (models.length) modelCache = { at: now, models: list };
     return list;
   }
 
   async *run(input: TurnInput): AsyncIterable<DriverEvent> {
+    const major = await openCodeMajor();
     const prompt = input.sessionId ? lastUserTurns(input) : transcriptPrompt("", input.messages).trim();
-    const mcp: Record<string, unknown> = {};
-    for (const m of input.mcpServers ?? []) {
-      if (m.url && /^[\w-]+$/.test(m.name)) mcp[`cadre_${m.name}`] = { type: "remote", url: m.url, enabled: true, timeout: 900_000 };
-    }
-    const config = {
-      $schema: "https://opencode.ai/config.json",
-      mcp,
-      agent: {
-        // Turn off only OpenCode's tools that change things. Keep its read-only ones: OpenCode's free
-        // models refuse requests that carry none of OpenCode's own tools ("Free usage limit reached …
-        // Free models work in OpenCode"), seen on 2026-11-08 with `"*": false` while the same model
-        // worked in the user's own OpenCode seconds later.
-        cadre: { mode: "primary", prompt: input.system || "You are a helpful teammate.", tools: { bash: false, task: false, todowrite: false, todoread: false } },
-      },
-      // Edits are allowed in the sandbox (OpenCode's project folder, --dir) and nowhere else:
-      // OpenCode asks external_directory before touching anything outside it, and that is denied.
-      // Its shell stays off because OpenCode does not confine shell commands to a folder.
-      permission: { edit: "allow", bash: "deny", webfetch: "deny", external_directory: "deny" },
-    };
-    const args = ["run", "--format", "json", "--print-logs", "--log-level", "ERROR", "-m", input.model, "--agent", "cadre"];
+    const config = buildConfig(input, major);
+
+    // OpenCode 2.x takes global flags before the subcommand, uses lowercase log levels, gets the
+    // project folder from the process cwd (it dropped `run --dir`), and needs --standalone: without
+    // it the CLI reuses a background server that never saw this turn's OPENCODE_CONFIG_CONTENT and
+    // then fails with "Agent not found: cadre". 1.x keeps its original command shape.
+    const args =
+      major >= 2
+        ? ["--standalone", "--print-logs", "--log-level", "error", "run", "--format", "json"]
+        : ["run", "--format", "json", "--print-logs", "--log-level", "ERROR"];
+    args.push("-m", input.model, "--agent", "cadre");
     if (input.sessionId) args.push("--session", input.sessionId);
-    if (input.cwd) args.push("--dir", input.cwd);
+    if (major < 2 && input.cwd) args.push("--dir", input.cwd);
     args.push(prompt);
 
     // Our own controller so a logged error that leaves opencode hanging can still end the turn.
     const ac = new AbortController();
     const onAbort = () => ac.abort();
     input.signal?.addEventListener("abort", onAbort, { once: true });
-    const gen = spawnJsonl({ bin: "opencode", args, cwd: input.cwd, env: { ...isolatedEnv(), OPENCODE_CONFIG_CONTENT: JSON.stringify(config) }, signal: ac.signal });
+    const env: Record<string, string> = { ...isolatedEnv(), OPENCODE_CONFIG_CONTENT: JSON.stringify(config) };
+    // OpenCode 2 uses $PWD as the project folder. Electron inherits the dev server's PWD, which can
+    // point somewhere else entirely (in development: apps/desktop), so the spawned process would
+    // treat Cadre's sandbox as an external directory even though its real cwd is correct.
+    if (input.cwd) env.PWD = input.cwd;
+    const gen = spawnJsonl({ bin: "opencode", args, cwd: input.cwd, env, signal: ac.signal });
     let announced = false;
     let wroteText = false;
     let failed: string | null = null;
@@ -118,12 +123,96 @@ export class OpenCodeDriver implements ModelDriver {
 }
 
 let modelCache: { at: number; models: { id: string; label?: string }[] } | null = null;
+let majorCache: number | null = null;
+
+/** OpenCode's major version: the CLI and config shapes differ between 1.x and 2.x. */
+async function openCodeMajor(): Promise<number> {
+  if (majorCache !== null) return majorCache;
+  const r = await execText("opencode", ["--version"], 15_000, isolatedEnv());
+  const m = r.code === 0 ? r.out.match(/(\d+)\.\d+/) : null;
+  majorCache = m ? Number(m[1]) : 1;
+  return majorCache;
+}
+
+/**
+ * The per-turn config. 1.x keeps its original shape (`mcp` server map, `agent`, `permission`).
+ * 2.x uses `mcp.servers`, `agents`, and a `permissions` rule list, and `codemode: false` so
+ * Cadre's MCP tools appear on the model's native tool list instead of only inside `execute`
+ * (Code Mode hides the real tool names and fills the transcript with JavaScript).
+ */
+function buildConfig(input: TurnInput, major: number): Record<string, unknown> {
+  const servers: Record<string, unknown> = {};
+  for (const m of input.mcpServers ?? []) {
+    if (m.url && /^[\w-]+$/.test(m.name)) {
+      servers[`cadre_${m.name}`] =
+        major >= 2
+          ? { type: "remote", url: m.url, disabled: false, codemode: false, timeout: { startup: 900_000, catalog: 900_000, execution: 900_000 } }
+          : { type: "remote", url: m.url, enabled: true, timeout: 900_000 };
+    }
+  }
+  const prompt = input.system || "You are a helpful teammate.";
+  if (major >= 2) {
+    // Edits are allowed in the sandbox (the process cwd) and nowhere else: OpenCode checks
+    // external_directory before touching anything outside it. Its shell stays off because OpenCode
+    // does not confine shell commands to a folder; Cadre's own shell_run tool still works through
+    // MCP and keeps Auto Review. Turn off only the OpenCode tools that change things; its
+    // read-only tools stay on because free models refuse requests that carry none of their own.
+    return {
+      $schema: "https://opencode.ai/config.json",
+      mcp: { servers },
+      agents: {
+        cadre: {
+          mode: "primary",
+          prompt,
+          permissions: [
+            { action: "subagent", resource: "*", effect: "deny" },
+            { action: "todowrite", resource: "*", effect: "deny" },
+            { action: "todoread", resource: "*", effect: "deny" },
+          ],
+        },
+      },
+      permissions: [
+        { action: "edit", resource: "*", effect: "allow" },
+        { action: "shell", resource: "*", effect: "deny" },
+        { action: "webfetch", resource: "*", effect: "deny" },
+        { action: "external_directory", resource: "*", effect: "deny" },
+      ],
+    };
+  }
+  return {
+    $schema: "https://opencode.ai/config.json",
+    mcp: servers,
+    agent: {
+      // Turn off only OpenCode's tools that change things. Keep its read-only ones: OpenCode's free
+      // models refuse requests that carry none of OpenCode's own tools ("Free usage limit reached …
+      // Free models work in OpenCode"), seen on 2026-11-08 with `"*": false` while the same model
+      // worked in the user's own OpenCode seconds later.
+      cadre: { mode: "primary", prompt, tools: { bash: false, task: false, todowrite: false, todoread: false } },
+    },
+    permission: { edit: "allow", bash: "deny", webfetch: "deny", external_directory: "deny" },
+  };
+}
 
 /** Keep the user's sign-ins (data dir) but not their config (MCP servers, plugins). */
 function isolatedEnv(): Record<string, string> {
   const dir = join(process.env.DATA_DIR ?? tmpdir(), "opencode-config");
   mkdirSync(dir, { recursive: true });
-  return { XDG_CONFIG_HOME: dir };
+  // XDG_CONFIG_HOME covers 1.x; 2.x reads OPENCODE_CONFIG_DIR and ignores XDG_CONFIG_HOME.
+  // Without this, the user's own config (MCP servers, plugins) merges into Cadre's turns.
+  return { XDG_CONFIG_HOME: dir, OPENCODE_CONFIG_DIR: dir };
+}
+
+/** OpenCode 2.x `models` prints one "provider/model" id per line. */
+export function parseModelIds(out: string): { id: string; label?: string }[] {
+  const seen = new Set<string>();
+  const models = out
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^[\w.-]+\/\S+$/.test(line) && !line.includes("://"))
+    .filter((id) => (seen.has(id) ? false : (seen.add(id), true)))
+    .map((id) => ({ id, label: id.startsWith("opencode/") ? `${id} · free` : id }));
+  models.sort((a, b) => Number(b.id.startsWith("opencode/")) - Number(a.id.startsWith("opencode/")));
+  return models;
 }
 
 /** `opencode models --verbose` prints "provider/model" then a JSON block per model. */
