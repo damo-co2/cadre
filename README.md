@@ -70,6 +70,7 @@ Settings (⌘,) → **Models**:
 |---|---|
 | Claude (subscription) | Uses the `claude` CLI already signed in on this machine (`claude` → `/login`). |
 | ChatGPT (subscription) | Uses the `codex` CLI (`codex login`). Model list comes from Codex's own cache. |
+| OpenCode | Uses the `opencode` CLI (`opencode auth login`): its free models plus any provider you signed in to. Works with OpenCode 1.x and 2.x. |
 | Anthropic / OpenAI / Google / xAI / OpenRouter | Paste an API key. Stored AES-256-GCM encrypted in the data dir. |
 | Ollama | Local models; set the base URL if not `localhost:11434`. |
 
@@ -81,7 +82,7 @@ apps/desktop            Electron + React + Tailwind; starts the server
 packages/shared         Types and zod schemas shared by both
 packages/db             Drizzle + better-sqlite3, encrypted secrets
 packages/sandbox        The computer: Playwright screens, shell, files, screencast, teach-a-task recording
-packages/model-drivers  One ModelDriver interface; API driver (Vercel AI SDK) + CLI drivers (Claude Code, Codex, Gemini CLI)
+packages/model-drivers  One ModelDriver interface; API driver (Vercel AI SDK) + CLI drivers (Claude Code, Codex, Gemini CLI, OpenCode)
 packages/agent-runtime  Wake router, turn loop, Auto Review, memory, skills/routines, Vault, connectors, group routing
 ```
 

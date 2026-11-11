@@ -337,6 +337,16 @@ Fixes it caught: the MCP route registered connector tools with an empty zod shap
 - Chat images in the Mac app: the renderer's CSP had `img-src 'self' data: blob:`; the packaged page is `file://`, so every `http://localhost:3123/api/files/…` image was blocked (phones were fine: same origin). CSP now allows `http://localhost:*` and `http://127.0.0.1:*` for img/media, and a failed image falls back to the file chip. Verified in the packaged app (1536×864 photo rendered).
 - Hiring limits are user settings (`hireLimitPerDay`, `teamSizeLimit`, 0 = no limit, the default) in Settings → Spaces → Hiring; counted per Chief (the old hard-coded 5/day counted every Chief together). OpenCode's free DeepSeek model confirmed working in Cadre on 2026-11-08 after the read-only-tools change.
 
+### 2026-11-12: OpenCode 2.x support
+
+- The OpenCode CLI driver now detects the installed major version (`opencode --version`) and uses the right command and config shapes, so 1.x keeps working while 2.x is supported.
+- **Command line:** 2.x wants global flags before the subcommand, lowercase log levels, and no `run --dir`; each turn now runs `opencode --standalone --print-logs --log-level error run --format json …` (1.x keeps its original `run … --dir`). `--standalone` is required or the CLI reuses a background server that never saw the turn's config and fails with `Agent not found: "cadre"`.
+- **Config:** 2.x moved MCP servers to `mcp.servers` with `disabled`/`codemode`/object `timeout`; the `cadre` agent moved to `agents`; and tool gating uses a `permissions` rule list (`shell`, `subagent`) instead of `agent.tools` + `permission`. 1.x keeps its old shape. `codemode: false` keeps Cadre's MCP tools on the model's native tool list instead of wrapping them in 2.x's `execute` Code Mode.
+- **Isolation:** 2.x ignores `XDG_CONFIG_HOME` and reads `OPENCODE_CONFIG_DIR`; both are set now so the user's own config never merges into a Cadre turn.
+- **Project folder:** 2.x takes the project folder from `$PWD`, not the process cwd. Electron inherits `PWD` from the dev server (in development `apps/desktop`), so the driver overrides `PWD` with the Bot's sandbox folder; otherwise OpenCode treats the sandbox as an external directory and its own `read`/`glob` tools are denied. Existing OpenCode sessions keep the folder they were created with, so a session started before this fix stays stuck until the conversation is reset.
+- **Models:** 2.x dropped `opencode models --verbose`. The driver tries `--verbose` first (1.x, nicer labels), then falls back to plain `opencode models` and parses the `provider/model` lines, free `opencode/*` models first (12 free on a clean install).
+- Verified live on OpenCode v2.2.6: provider ready, 385 models listed, chat + session memory, and both Cadre's MCP tools (`fs_list`, `fs_read`, `shell_run`) and OpenCode's own `read`/`glob` working inside `~/Cadre`.
+
 ## Sandbox folder (~/Cadre)
 
 Bots change files freely in one folder and nowhere else.
