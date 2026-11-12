@@ -1245,14 +1245,16 @@ export class MessageRepo {
     return ids.map((id) => this.update(id, { status: "stopped" })).filter((m): m is Message => !!m);
   }
 
+  /** The newest `limit` messages, oldest first. (Taking the oldest ones froze long chats at message 500.) */
   list(conversationId: string, limit = 500): Message[] {
     return this.db
       .select()
       .from(schema.messages)
       .where(eq(schema.messages.conversationId, conversationId))
-      .orderBy(asc(schema.messages.createdAt))
+      .orderBy(desc(schema.messages.createdAt), desc(sql`rowid`))
       .limit(limit)
       .all()
+      .reverse()
       .map(rowToMessage);
   }
 
