@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, GitPullRequest, Maximize2, Plus, X } from "lucide-react";
-import type { Bot, PullRequestLink, Task } from "@grokbot/shared";
+import { Check, GitPullRequest, Maximize2, Pin as PinIcon, Plus, X } from "lucide-react";
+import type { Bot, Pin, PullRequestLink, Task } from "@grokbot/shared";
+import { plainPreview } from "@grokbot/shared";
 import { api } from "../lib/api";
 import { frameBus } from "../lib/frames";
 import { useStore } from "../lib/store";
@@ -23,6 +24,7 @@ export function TeamPanel({ bot, onClose, onOpenComputer, fullScreen = false }: 
         </button>
       </div>
       {bot && <LiveScreen bot={bot} onOpen={onOpenComputer} />}
+      <Pinned />
       <TaskBoard defaultOwner={bot} />
       <PullRequests />
       <NextUp />
@@ -183,6 +185,61 @@ function TaskBoard({ defaultOwner }: { defaultOwner: Bot | null }) {
             </div>
           ))}
         </div>
+      )}
+    </section>
+  );
+}
+
+/** Messages the user pinned to come back to. Click to jump to the message; × unpins. */
+function Pinned() {
+  const pins = useStore((s) => s.pins);
+  const bots = useStore((s) => s.bots);
+  const groups = useStore((s) => s.groups);
+  const spaceId = useStore((s) => s.spaceId);
+  const openPin = useStore((s) => s.openPin);
+  const unpin = useStore((s) => s.unpin);
+  const [showAll, setShowAll] = useState(false);
+
+  const shown = useMemo(() => {
+    const ids = new Set(bots.filter((b) => !spaceId || b.spaceId === spaceId).map((b) => b.id));
+    return pins.filter((p) => !p.botId || ids.has(p.botId) || groups.some((g) => g.id === p.conversationId));
+  }, [pins, bots, groups, spaceId]);
+
+  if (!shown.length) return null;
+  const where = (p: Pin) => {
+    const group = groups.find((g) => g.id === p.conversationId);
+    const author = p.role === "user" ? "You" : (bots.find((b) => b.id === p.botId)?.name ?? "a Bot");
+    return group ? `${author} in ${group.title ?? "group chat"}` : author;
+  };
+  const list = showAll ? shown : shown.slice(0, 6);
+  return (
+    <section>
+      <div className="label-mono mb-1.5">Pinned · {shown.length}</div>
+      <div className="divide-y divide-line">
+        {list.map((p) => (
+          <div key={p.id} className="group flex items-start gap-2.5 py-2">
+            <PinIcon size={13} className="mt-1 shrink-0 fill-current text-accent" />
+            <button onClick={() => void openPin(p)} className="min-w-0 flex-1 text-left" title={p.text}>
+              <div className="line-clamp-3 whitespace-pre-line break-words text-[14px] leading-snug">{plainPreview(p.text)}</div>
+              <div className="truncate font-mono text-[12px] text-muted">
+                {where(p)} · {agoLabel(p.messageAt)}
+              </div>
+            </button>
+            <button
+              onClick={() => void unpin(p.id)}
+              className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted opacity-0 hover:bg-elev hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+              title="Unpin"
+              aria-label="Unpin"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ))}
+      </div>
+      {shown.length > 6 && (
+        <button onClick={() => setShowAll((v) => !v)} className="mt-1 font-mono text-[12px] text-muted hover:text-fg">
+          {showAll ? "Show fewer" : `Show all ${shown.length}`}
+        </button>
       )}
     </section>
   );

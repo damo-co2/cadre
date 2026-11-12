@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, LayoutGrid, Zap, Menu, Monitor, ShieldAlert } from "lucide-react";
 import type { Bot } from "@grokbot/shared";
+import { formatReply } from "@grokbot/shared";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import { MOBILE_QUERY, useMediaQuery } from "../lib/useMediaQuery";
@@ -34,6 +35,8 @@ export function ChatView() {
   const bots = useStore((s) => s.bots);
   const selectBot = useStore((s) => s.selectBot);
   const skills = useStore((s) => s.skills);
+  const replyTo = useStore((s) => s.replyTo);
+  const setReplyTo = useStore((s) => s.setReplyTo);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const mobileComputerOpen = useStore((s) => s.mobileComputerOpen);
@@ -72,6 +75,27 @@ export function ChatView() {
     if (switched || last?.role === "user" || nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // Opening a pin: once its message is on screen, scroll to it and flash it.
+  const focusMessageId = useStore((s) => s.focusMessageId);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (!focusMessageId) return;
+    const pin = useStore.getState().pins.find((p) => p.messageId === focusMessageId);
+    // Wait until the pin's chat has loaded.
+    if (pin && messages[0]?.conversationId !== pin.conversationId) return;
+    useStore.setState({ focusMessageId: null });
+    const el = document.getElementById(`msg-${focusMessageId}`);
+    if (!el) {
+      if (pin) useStore.setState({ error: "That pinned message is older than the last 500 in this chat. Its text is still on the pin in Team pulse." });
+      return;
+    }
+    el.scrollIntoView({ block: "center" });
+    setFlashId(focusMessageId);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashId(null), 1800);
+  }, [messages, focusMessageId]);
+
   useEffect(() => {
     setDetailsOpen(false);
   }, [conversation?.id]);
@@ -98,7 +122,9 @@ export function ChatView() {
 
   const sendWithFiles = async (text: string, files: File[]) => {
     const attachmentIds = files.length ? (await api.uploads(files)).map((a) => a.id) : [];
-    await send(text, attachmentIds);
+    const to = useStore.getState().replyTo;
+    await send(to ? formatReply(to, text) : text, attachmentIds);
+    if (to) setReplyTo(null);
   };
 
   const title = isGroup ? groupTitle(conversation.title, members) : bot!.name;
@@ -221,7 +247,9 @@ export function ChatView() {
             ) : (
               <div className="space-y-5">
                 {messages.map((m) => (
-                  <MessageBubble key={m.id} message={m} bot={bot} />
+                  <div key={m.id} id={`msg-${m.id}`} className={`rounded-[12px] transition-shadow duration-500 ${flashId === m.id ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""}`}>
+                    <MessageBubble message={m} bot={bot} />
+                  </div>
                 ))}
               </div>
             )}
@@ -271,6 +299,8 @@ export function ChatView() {
           mentions={mentions}
           onSend={sendWithFiles}
           onStop={() => void stop()}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
         />
       </div>
       {showComputer &&

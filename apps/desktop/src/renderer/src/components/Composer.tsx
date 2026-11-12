@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, AtSign, FileText, Image as ImageIcon, Mic, Paperclip, Slash, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, FileText, Image as ImageIcon, Mic, Paperclip, Reply, Slash, Square, X } from "lucide-react";
 import type { Skill } from "@grokbot/shared";
 import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_DOCUMENT_BYTES, MAX_IMAGE_BYTES } from "@grokbot/shared";
 import { formatBytes, isImageFile } from "../lib/files";
@@ -25,6 +25,8 @@ export function Composer({
   mentions = [],
   onSend,
   onStop,
+  replyTo = null,
+  onCancelReply,
 }: {
   botName: string;
   placeholder?: string;
@@ -34,6 +36,9 @@ export function Composer({
   /** Resolves once the message (and any uploads) are accepted; rejects to keep the draft and show the error. */
   onSend: (text: string, files: File[]) => Promise<void> | void;
   onStop: () => void;
+  /** Shown above the box while replying to a message; × or Escape cancels. */
+  replyTo?: { author: string; text: string } | null;
+  onCancelReply?: () => void;
 }) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -56,7 +61,7 @@ export function Composer({
     el.style.height = `${wanted}px`;
   }, [text]);
 
-  useEffect(() => ref.current?.focus(), [botName]);
+  useEffect(() => ref.current?.focus(), [botName, replyTo]);
 
   // "/" or "@" typed at the very start of an otherwise empty composer opens the picker; it closes on space, Escape or insert.
   const picker = useMemo(() => {
@@ -143,6 +148,11 @@ export function Composer({
       setPickerClosed(true);
       return;
     }
+    if (replyTo && e.key === "Escape") {
+      e.preventDefault();
+      onCancelReply?.();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void submit();
@@ -196,6 +206,18 @@ export function Composer({
                 </button>
               ))
             )}
+          </div>
+        )}
+        {replyTo && (
+          <div className="mx-1 mb-1.5 mt-0.5 flex items-start gap-2 rounded-[10px] border-l-2 border-accent bg-elev px-2.5 py-1.5">
+            <Reply size={13} className="mt-0.5 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] font-medium">Replying to {replyTo.author}</div>
+              <div className="line-clamp-2 break-words text-[13px] text-muted">{replyTo.text}</div>
+            </div>
+            <button onClick={onCancelReply} className="rounded-full p-0.5 text-muted hover:bg-sunken hover:text-fg" title="Cancel reply (Esc)" aria-label="Cancel reply">
+              <X size={13} />
+            </button>
           </div>
         )}
         {files.length > 0 && (

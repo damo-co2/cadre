@@ -13,6 +13,7 @@ import type {
   ClientMessage,
   Conversation,
   Message,
+  Pin,
   Routine,
   RoutineRun,
   ScreenState,
@@ -106,6 +107,13 @@ interface State {
   tasks: Task[];
   /** Goes up when a finished reply mentions a GitHub pull request (Team pulse refetches its PR list). */
   prRev: number;
+  /** Messages the user pinned (newest first); listed on Team pulse. */
+  pins: Pin[];
+  /** A message to scroll to and highlight once its chat is open (set by opening a pin). */
+  focusMessageId: string | null;
+  /** The message the composer is replying to (cleared on send or when the chat changes). */
+  replyTo: { messageId: string; author: string; text: string } | null;
+  setReplyTo(to: { messageId: string; author: string; text: string } | null): void;
   /** Right-hand panel on desktop: the Team panel, the full computer, or nothing. Remembered per device. */
   rightPanel: "team" | "computer" | null;
   /** Phone: the Team panel as a full-screen overlay. */
@@ -143,6 +151,12 @@ interface State {
   setRightPanel(v: "team" | "computer" | null): void;
   loadTasks(): Promise<void>;
   loadAllRoutines(): Promise<void>;
+  loadPins(): Promise<void>;
+  /** Pin a message, or unpin it if it is already pinned. */
+  togglePin(message: Message): Promise<void>;
+  unpin(id: string): Promise<void>;
+  /** Open the chat a pin came from and scroll to the pinned message. */
+  openPin(pin: Pin): Promise<void>;
   createTask(input: { title: string; detail?: string; ownerBotId?: string | null }): Promise<void>;
   updateTask(id: string, patch: Partial<Pick<Task, "status" | "ownerBotId" | "result" | "title">>): Promise<void>;
   /** Flip between the Tidewater night and day themes (leaves "system" when used). */
@@ -202,6 +216,12 @@ export function botsInSpace(bots: Bot[], spaceId: string | null): Bot[] {
 export const useStore = create<State>((set, get) => ({
   tasks: [],
   prRev: 0,
+  pins: [],
+  focusMessageId: null,
+  replyTo: null,
+  setReplyTo(to) {
+    set({ replyTo: to });
+  },
   rightPanel: savedRightPanel(),
   mobileTeamOpen: false,
   connected: false,
@@ -270,6 +290,44 @@ export const useStore = create<State>((set, get) => ({
     } catch {
       /* older server */
     }
+  },
+
+  async loadPins() {
+    try {
+      set({ pins: await api.pins.list() });
+    } catch {
+      /* older server: no pins */
+    }
+  },
+
+  async togglePin(message) {
+    const pinned = get().pins.find((p) => p.messageId === message.id);
+    try {
+      if (pinned) {
+        set({ pins: get().pins.filter((p) => p.id !== pinned.id) });
+        await api.pins.delete(pinned.id);
+      } else {
+        const pin = await api.pins.create(message.id);
+        set({ pins: [pin, ...get().pins.filter((p) => p.id !== pin.id)] });
+      }
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      void get().loadPins();
+    }
+  },
+
+  async unpin(id) {
+    set({ pins: get().pins.filter((p) => p.id !== id) });
+    try {
+      await api.pins.delete(id);
+    } catch {
+      void get().loadPins();
+    }
+  },
+
+  async openPin(pin) {
+    set({ focusMessageId: pin.messageId, mobileTeamOpen: false });
+    if (get().conversation?.id !== pin.conversationId) await get().openChat(pin.conversationId, pin.botId ?? undefined);
   },
 
   async createTask(input) {
@@ -348,6 +406,7 @@ export const useStore = create<State>((set, get) => ({
       const spaceId = spaces.some((x) => x.id === get().spaceId) ? get().spaceId : (spaces[0]?.id ?? null);
       set({ spaces, spaceId, bots, settings, approvals, botStatus, skills, vault, connectors, secureForms, groups: groups.filter((c) => c.kind === "group"), error: null });
       void get().loadTasks();
+      void get().loadPins();
       void get().loadAllRoutines();
       const { selectedBotId, selectedConversationId } = get();
       const here = botsInSpace(bots, spaceId);
@@ -362,7 +421,7 @@ export const useStore = create<State>((set, get) => ({
 
   async selectBot(id) {
     if (!id) return set({ selectedBotId: null, selectedConversationId: null, conversation: null, messages: [] });
-    set({ selectedBotId: id, unread: { ...get().unread, [id]: false }, mobileSidebarOpen: false, mobileComputerOpen: false });
+    set({ replyTo: get().selectedBotId === id ? get().replyTo : null, selectedBotId: id, unread: { ...get().unread, [id]: false }, mobileSidebarOpen: false, mobileComputerOpen: false });
     void get().loadRoutines(id);
     const conversation = await api.bots.conversation(id);
     if (get().selectedBotId !== id) return;
@@ -380,6 +439,7 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
     set({
+      replyTo: get().selectedConversationId === id ? get().replyTo : null,
       selectedBotId: null,
       selectedConversationId: id,
       conversation: group,
@@ -730,6 +790,9 @@ export const useStore = create<State>((set, get) => ({
         // Plugin skills and agents changed: reload skills; templates reload when the New Bot dialog opens.
         set({ templates: null });
         void api.skills.list().then((skills) => set({ skills })).catch(() => undefined);
+        break;
+      case "pins.updated":
+        void get().loadPins();
         break;
       case "task.updated":
         set({ tasks: isOpenTask(e.task) ? upsert(s.tasks, e.task) : s.tasks.filter((t) => t.id !== e.task.id) });

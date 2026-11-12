@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
+  Pin,
   Task,
   TaskPriority,
   TaskStatus,
@@ -62,6 +63,7 @@ export interface Store {
   memories: MemoryRepo;
   skills: SkillRepo;
   plugins: PluginRepo;
+  pins: PinRepo;
   routines: RoutineRepo;
   vault: VaultRepo;
   secureForms: SecureFormRepo;
@@ -102,6 +104,7 @@ export function openStore(dataDir: string): Store {
     memories: new MemoryRepo(db),
     skills: new SkillRepo(db),
     plugins: new PluginRepo(db),
+    pins: new PinRepo(db),
     routines: new RoutineRepo(db),
     vault: new VaultRepo(db, secrets),
     secureForms: new SecureFormRepo(db),
@@ -562,6 +565,40 @@ export class PluginRepo {
 
   delete(id: string): void {
     this.db.delete(schema.plugins).where(eq(schema.plugins.id, id)).run();
+  }
+}
+
+// ---------- Pins ----------
+
+export class PinRepo {
+  constructor(private db: Db) {}
+
+  /** Newest pin first. Pins whose chat was deleted are dropped. */
+  list(): Pin[] {
+    return this.db
+      .select()
+      .from(schema.pins)
+      .where(sql`exists (select 1 from conversations c where c.id = ${schema.pins.conversationId})`)
+      .orderBy(desc(schema.pins.createdAt))
+      .all()
+      .map((r) => ({ ...r, role: r.role as Pin["role"] }));
+  }
+
+  byMessage(messageId: string): Pin | undefined {
+    const r = this.db.select().from(schema.pins).where(eq(schema.pins.messageId, messageId)).get();
+    return r ? { ...r, role: r.role as Pin["role"] } : undefined;
+  }
+
+  create(input: Omit<Pin, "id" | "createdAt">): Pin {
+    const existing = this.byMessage(input.messageId);
+    if (existing) return existing;
+    const id = newId();
+    this.db.insert(schema.pins).values({ ...input, id, createdAt: nowIso() }).run();
+    return this.byMessage(input.messageId)!;
+  }
+
+  delete(id: string): void {
+    this.db.delete(schema.pins).where(eq(schema.pins.id, id)).run();
   }
 }
 

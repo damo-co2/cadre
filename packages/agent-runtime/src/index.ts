@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "nod
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Bot, Conversation, Message, MessagePart, Routine, RoutineRun, ServerEvent } from "@grokbot/shared";
-import { MAX_GROUP_BOTS, MIN_GROUP_BOTS, makeModelRef, parseMentions, parseModelRef } from "@grokbot/shared";
+import { MAX_GROUP_BOTS, MIN_GROUP_BOTS, makeModelRef, parseMentions, parseModelRef, parseReply } from "@grokbot/shared";
 import { ApprovalGate, review } from "./approvals.js";
 import { AutomationTools, RoutineScheduler, type RuntimeToolSpec } from "./automation.js";
 import { ConnectorManager } from "./connectors.js";
@@ -202,10 +202,19 @@ export class AgentRuntime {
     this.wrappingUp.delete(conversation.id);
     this.discussions.delete(conversation.id);
     this.checks.delete(conversation.id);
-    if (conversation.kind === "group" && conversation.botIds.length > 1 && parseMentions(message.content, []).everyone) {
+    // A reply's quote header is context, not an address: only the user's own text can @mention.
+    const { reply, body } = parseReply(message.content);
+    if (conversation.kind === "group" && conversation.botIds.length > 1 && parseMentions(body, []).everyone) {
       this.discussions.set(conversation.id, { quiet: 0 });
     }
-    const targets = this.groupTargets(conversation, message.content, null);
+    let targets = this.groupTargets(conversation, body, null);
+    if (reply && conversation.kind === "group") {
+      // Replying to a Bot's message with no @mention goes to that Bot.
+      const members = conversation.botIds.map((id) => this.opts.store.bots.get(id)).filter((x): x is Bot => !!x);
+      const { mentioned, everyone } = parseMentions(body, members.map((x) => x.name));
+      const author = members.find((x) => x.name === reply.author);
+      if (author && !everyone && !mentioned.length) targets = [author.id];
+    }
     for (const botId of targets) this.wake({ source: "user", conversationId: conversation.id, botId, messageId: message.id });
   }
 

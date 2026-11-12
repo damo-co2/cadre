@@ -193,6 +193,73 @@ export interface Message {
   updatedAt: string;
 }
 
+/** A message the user pinned to come back to later; listed on Team pulse. Keeps a copy of the text so it survives the message scrolling out of view. */
+export interface Pin {
+  id: string;
+  conversationId: string;
+  messageId: string;
+  /** The Bot whose chat this is (direct chats), or who wrote the message (groups). */
+  botId: string | null;
+  role: MessageRole;
+  /** The message text, up to PIN_TEXT_MAX characters. */
+  text: string;
+  /** When the pinned message was written. */
+  messageAt: string;
+  createdAt: string;
+}
+
+export const PIN_TEXT_MAX = 4000;
+
+export const createPinSchema = z.object({ messageId: z.string().min(1) });
+
+/** The readable text of a message: its content, else its text parts, else its attachment names. Cut to `max` characters. */
+export function messageText(m: Pick<Message, "content" | "parts" | "attachments">, max = PIN_TEXT_MAX): string {
+  const fromParts = m.parts
+    .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
+    .map((p) => p.text)
+    .join("\n\n");
+  const files = m.attachments.map((a) => a.name).join(", ");
+  const text = (m.content.trim() || fromParts.trim() || (files ? `Files: ${files}` : "")).trim();
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/** Markdown → plain text for short previews (pins, reply quotes): drops emphasis, code ticks, headings, quotes and link targets. */
+export function plainPreview(md: string): string {
+  return md
+    .replace(/```[a-z]*\n?/gi, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~|`)/g, "")
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]\s|\d+\.\s)\s*/gm, "")
+    .trim();
+}
+
+/** A reply to an earlier message is sent as a one-line quote header, so the Bot sees what is being answered. */
+export interface ReplyQuote {
+  author: string;
+  /** First 8 characters of the quoted message's id. */
+  messageId: string;
+  quote: string;
+}
+
+export const REPLY_QUOTE_MAX = 280;
+const REPLY_RE = /^\[Replying to (.+?) · msg ([0-9a-zA-Z-]{8}): "([\s\S]*?)"\]\n\n?/;
+
+export function formatReply(to: { author: string; messageId: string; text: string }, body: string): string {
+  // "@" becomes a full-width "＠" so a quoted @Name never wakes that Bot in a group.
+  let quote = to.text.replace(/\s+/g, " ").trim().replace(/"\]/g, '" ]').replace(/@/g, "＠");
+  if (quote.length > REPLY_QUOTE_MAX) quote = `${quote.slice(0, REPLY_QUOTE_MAX)}…`;
+  const author = to.author.replace(/[·\]\n]/g, " ").trim() || "message";
+  return `[Replying to ${author} · msg ${to.messageId.slice(0, 8)}: "${quote}"]\n\n${body}`;
+}
+
+/** Splits a reply into its quote and the user's own text; `reply` is null for an ordinary message. */
+export function parseReply(content: string): { reply: ReplyQuote | null; body: string } {
+  const m = REPLY_RE.exec(content);
+  if (!m) return { reply: null, body: content };
+  return { reply: { author: m[1]!, messageId: m[2]!, quote: m[3]! }, body: content.slice(m[0].length) };
+}
+
+
 export const sendMessageSchema = z.object({
   content: z.string().max(100_000).default(""),
   /** Ids returned by POST /api/uploads. */
@@ -1003,6 +1070,7 @@ export type ServerEvent =
   | { type: "skill.updated"; skill: Skill }
   /** A plugin was installed, changed or removed: reload skills and Bot templates. */
   | { type: "plugins.updated" }
+  | { type: "pins.updated" }
   | { type: "skill.deleted"; skillId: string }
   | { type: "error"; message: string; conversationId?: string };
 

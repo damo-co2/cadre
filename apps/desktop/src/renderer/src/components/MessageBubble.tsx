@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ArrowRightLeft, ChevronRight, ClipboardList, Download, ExternalLink, FileText, GraduationCap, Hand, Loader2, Repeat, UserMinus, UserPlus, Wrench } from "lucide-react";
-import type { Attachment, Bot, Message, MessagePart } from "@grokbot/shared";
+import { ArrowRightLeft, ChevronRight, ClipboardList, Download, ExternalLink, FileText, GraduationCap, Hand, Loader2, Pin, Repeat, Reply, UserMinus, UserPlus, Wrench } from "lucide-react";
+import type { Attachment, Bot, Message, MessagePart, ReplyQuote } from "@grokbot/shared";
+import { messageText, parseReply, plainPreview } from "@grokbot/shared";
 import { fileUrl, workspaceUrl } from "../lib/api";
 import { formatBytes, isImageFile } from "../lib/files";
 import { useStore } from "../lib/store";
@@ -14,11 +15,19 @@ import { Markdown } from "./Markdown";
 export function MessageBubble({ message, bot }: { message: Message; bot?: Bot }) {
   const sender = useStore((s) => (message.botId ? s.bots.find((b) => b.id === message.botId) : undefined)) ?? bot;
   if (message.role === "user") {
+    const { reply, body } = parseReply(message.content);
     return (
-      <div className="flex flex-col items-end gap-1.5">
+      <div className="group flex flex-col items-end gap-1.5">
         {message.content && (
-          <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-[16px] rounded-br-[4px] bg-bubble px-3.5 py-2.5 font-medium text-bubble-fg md:max-w-[72%]">
-            {message.content}
+          <div className="flex max-w-full items-start justify-end gap-1.5">
+            <div className="mt-2 flex">
+              <ReplyButton message={message} author="You" />
+              <PinButton message={message} />
+            </div>
+            <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-[16px] rounded-br-[4px] bg-bubble px-3.5 py-2.5 font-medium text-bubble-fg md:max-w-[72%]">
+              {reply && <QuoteCard reply={reply} />}
+              {body}
+            </div>
           </div>
         )}
         <Attachments items={message.attachments} align="end" />
@@ -69,7 +78,7 @@ export function MessageBubble({ message, bot }: { message: Message; bot?: Bot })
   const isEmpty = message.parts.length === 0;
   const name = sender?.name ?? "Bot";
   return (
-    <div className="flex gap-3">
+    <div className="group flex gap-3">
       {sender ? (
         <BotAvatar name={sender.name} color={sender.avatarColor} shape={sender.avatarShape} image={sender.avatarImage} size={28} className="mt-0.5" />
       ) : (
@@ -81,6 +90,12 @@ export function MessageBubble({ message, bot }: { message: Message; bot?: Bot })
           <span>·</span>
           <span className="font-mono text-[12.5px]">{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
           {message.modelRef && <span className="hidden font-mono text-[12px] opacity-70 sm:inline">· {message.modelRef}</span>}
+          {message.status !== "streaming" && !isEmpty && (
+            <span className="flex self-center">
+              <ReplyButton message={message} author={name} />
+              <PinButton message={message} />
+            </span>
+          )}
         </div>
         <div className="space-y-2">
           {isEmpty && message.status === "streaming" && (
@@ -105,6 +120,54 @@ export function MessageBubble({ message, bot }: { message: Message; bot?: Bot })
         </div>
       </div>
     </div>
+  );
+}
+
+/** Reply to this message: the composer shows it, and the sent message carries a short quote of it. */
+function ReplyButton({ message, author }: { message: Message; author: string }) {
+  const setReplyTo = useStore((s) => s.setReplyTo);
+  const replying = useStore((s) => s.replyTo?.messageId === message.id);
+  return (
+    <button
+      onClick={() => setReplyTo(replying ? null : { messageId: message.id, author, text: plainPreview(messageText(message, 600)) })}
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-elev ${replying ? "text-accent" : "text-muted opacity-0 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"}`}
+      title={replying ? "Cancel reply" : "Reply to this message"}
+      aria-label="Reply"
+    >
+      <Reply size={13} />
+    </button>
+  );
+}
+
+/** The quoted message at the top of a reply. Click to jump to it. */
+function QuoteCard({ reply }: { reply: ReplyQuote }) {
+  const jump = () => {
+    const s = useStore.getState();
+    const original = s.messages.find((m) => m.id.startsWith(reply.messageId));
+    if (original) useStore.setState({ focusMessageId: original.id });
+    else useStore.setState({ error: "That message is older than the last 500 in this chat." });
+  };
+  return (
+    <button onClick={jump} className="mb-1.5 block w-full rounded-[8px] border-l-2 border-accent bg-black/10 px-2.5 py-1 text-left text-[13px] font-normal opacity-80 hover:opacity-100" title="Go to the original message">
+      <span className="font-semibold">{reply.author}</span>
+      <span className="line-clamp-2">{reply.quote}</span>
+    </button>
+  );
+}
+
+/** Pin a message to Team pulse to come back to later. Shows on hover; stays visible once pinned. */
+function PinButton({ message, className = "" }: { message: Message; className?: string }) {
+  const pinned = useStore((s) => s.pins.some((p) => p.messageId === message.id));
+  const togglePin = useStore((s) => s.togglePin);
+  return (
+    <button
+      onClick={() => void togglePin(message)}
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-elev ${pinned ? "text-accent" : "text-muted opacity-0 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"} ${className}`}
+      title={pinned ? "Unpin" : "Pin to Team pulse to come back to later"}
+      aria-label={pinned ? "Unpin message" : "Pin message"}
+    >
+      <Pin size={13} className={pinned ? "fill-current" : ""} />
+    </button>
   );
 }
 

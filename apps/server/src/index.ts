@@ -27,6 +27,7 @@ import { templatesRoutes } from "./routes/templates.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { pluginsRoutes } from "./routes/plugins.js";
 import { pullRequestsRoutes } from "./routes/pullRequests.js";
+import { pinsRoutes } from "./routes/pins.js";
 import { AccessManager, accessMiddleware, accessRoutes, rendererHandler } from "./access.js";
 import type { AppEnv } from "./context.js";
 
@@ -112,6 +113,7 @@ app.route("/mcp", mcpRoute);
 app.route("/api/templates", templatesRoutes);
 app.route("/api/tasks", tasksRoutes);
 app.route("/api/pull-requests", pullRequestsRoutes);
+app.route("/api/pins", pinsRoutes);
 app.route("/api/plugins", pluginsRoutes);
 app.route("/api/access", accessRoutes(access));
 

@@ -138,6 +138,18 @@ export const plugins = sqliteTable("plugins", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/** Messages the user pinned to come back to (shown on Team pulse). */
+export const pins = sqliteTable("pins", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull(),
+  messageId: text("message_id").notNull().unique(),
+  botId: text("bot_id"),
+  role: text("role").notNull(),
+  text: text("text").notNull(),
+  messageAt: text("message_at").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const routines = sqliteTable("routines", {
   id: text("id").primaryKey(),
   botId: text("bot_id").notNull(),
@@ -392,6 +404,16 @@ CREATE TABLE IF NOT EXISTS plugins (
   servers TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pins (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  message_id TEXT NOT NULL UNIQUE,
+  bot_id TEXT,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  message_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS routines (
   id TEXT PRIMARY KEY,

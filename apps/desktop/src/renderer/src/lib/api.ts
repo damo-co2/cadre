@@ -4,6 +4,7 @@ import type {
   Space,
   Task,
   PullRequestLink,
+  Pin,
   AccessInfo,
   AppConnector,
   AppSettings,
@@ -196,6 +197,11 @@ export const api = {
   },
   pullRequests: {
     list: () => req<PullRequestLink[]>("/api/pull-requests"),
+  },
+  pins: {
+    list: () => req<Pin[]>("/api/pins"),
+    create: (messageId: string) => req<Pin>("/api/pins", { method: "POST", body: JSON.stringify({ messageId }) }),
+    delete: (id: string) => req<void>(`/api/pins/${id}`, { method: "DELETE" }),
   },
   tasks: {
     list: (all = false) => req<Task[]>(`/api/tasks${all ? "?all=1" : ""}`),
