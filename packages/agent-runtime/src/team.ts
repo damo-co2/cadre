@@ -4,7 +4,7 @@ import type { ToolCallResult } from "@grokbot/sandbox";
 import type { Bot, Routine, ServerEvent, Task } from "@grokbot/shared";
 import { MAX_BRIEF_LENGTH, MAX_ROUTINES_PER_BOT, TASK_PRIORITIES, TASK_STATUSES, makeModelRef, parseModelRef } from "@grokbot/shared";
 import { type RoutineScheduler, type RuntimeToolSpec, validateCron } from "./automation.js";
-import { BOT_TEMPLATES, findTemplate, instantiateTemplate, introductionMessage } from "./templates.js";
+import { allTemplates, findTemplate, instantiateTemplate, introductionMessage } from "./templates.js";
 
 /** Most Bots on a team, and most hires the Chief of Staff can make in 24 hours. */
 
@@ -96,7 +96,7 @@ export class TeamTools {
       }),
       spec(
         "bot_hire",
-        `Hire a new Bot onto the team: from a template (${BOT_TEMPLATES.filter((t) => !t.primary).map((t) => t.id).join(", ")}) or a custom role with your own brief. It is created with its routines, introduces itself to the user, and (with first_task) starts work at once.${this.limitsText()} Prefer an existing Bot when one fits.`,
+        `Hire a new Bot onto the team: from a template (${allTemplates().filter((t) => !t.primary).map((t) => t.id).join(", ")}) or a custom role with your own brief. It is created with its routines, introduces itself to the user, and (with first_task) starts work at once.${this.limitsText()} Prefer an existing Bot when one fits.`,
         {
           template: z.string().optional().describe("Template id, e.g. 'market-scout'. Omit for a custom role."),
           name: z.string().optional().describe("Name for the Bot (defaults to the template's)"),
@@ -291,7 +291,7 @@ export class TeamTools {
     const templateId = typeof a.template === "string" ? a.template.trim() : "";
     const modelRef = this.normaliseModel(a.model as string | undefined);
     let template = templateId ? findTemplate(templateId) : undefined;
-    if (templateId && !template) return fail(`No template "${templateId}". Templates: ${BOT_TEMPLATES.map((t) => t.id).join(", ")}`);
+    if (templateId && !template) return fail(`No template "${templateId}". Templates: ${allTemplates().map((t) => t.id).join(", ")}`);
     if (template?.primary) return fail("There is only one Chief of Staff: you.");
     if (!template) {
       const role = String(a.role ?? "").trim();

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("cadre", {
   getZoom: (): Promise<number> => ipcRenderer.invoke("cadre:getZoom"),
   setZoom: (factor: number) => ipcRenderer.send("cadre:setZoom", factor),
   copyText: (text: string) => ipcRenderer.send("cadre:copy", text),
+  pickFolder: (title?: string): Promise<string | null> => ipcRenderer.invoke("cadre:pickFolder", title),
 });
 
 // ⌘= / ⌘- / ⌘0 and the Settings slider all report the new zoom back to the page.

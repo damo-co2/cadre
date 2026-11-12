@@ -124,6 +124,20 @@ export const skills = sqliteTable("skills", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/** Plugins and skills folders from any agent harness (skills, apps and agents read from `path`). */
+export const plugins = sqliteTable("plugins", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  sourceKind: text("source_kind").notNull(), // folder | git
+  path: text("path").notNull(),
+  url: text("url"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /** JSON { serverKey: connectorId } for the apps this plugin added. */
+  servers: text("servers").notNull().default("{}"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const routines = sqliteTable("routines", {
   id: text("id").primaryKey(),
   botId: text("bot_id").notNull(),
@@ -365,6 +379,17 @@ CREATE TABLE IF NOT EXISTS skills (
   description TEXT NOT NULL,
   content TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'written',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plugins (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  url TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  servers TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

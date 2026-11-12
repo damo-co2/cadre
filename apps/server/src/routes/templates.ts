@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { createFromTemplateSchema, createSquadSchema, type Bot } from "@grokbot/shared";
-import { TEMPLATE_CATALOG, findSquad, findTemplate, instantiateTemplate, introductionMessage } from "@grokbot/agent-runtime";
+import { findSquad, findTemplate, instantiateTemplate, introductionMessage, templateCatalog } from "@grokbot/agent-runtime";
 import type { AppEnv } from "../context.js";
 
 /** Bot templates and squads: GET the catalog, create a Bot or a whole team from one. */
 export const templatesRoutes = new Hono<AppEnv>();
 
-templatesRoutes.get("/", (c) => c.json(TEMPLATE_CATALOG));
+templatesRoutes.get("/", (c) => c.json(templateCatalog()));
 
 templatesRoutes.post("/:id/create", async (c) => {
   const t = findTemplate(c.req.param("id"));

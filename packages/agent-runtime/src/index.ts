@@ -4,13 +4,15 @@ import { PROVIDERS } from "@grokbot/model-drivers";
 import type { ComputerService, ToolCallResult } from "@grokbot/sandbox";
 import { COMPUTER_SYSTEM_PROMPT, canConfine } from "@grokbot/sandbox";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Bot, Conversation, Message, MessagePart, Routine, RoutineRun, ServerEvent } from "@grokbot/shared";
 import { MAX_GROUP_BOTS, MIN_GROUP_BOTS, makeModelRef, parseMentions, parseModelRef } from "@grokbot/shared";
 import { ApprovalGate, review } from "./approvals.js";
 import { AutomationTools, RoutineScheduler, type RuntimeToolSpec } from "./automation.js";
 import { ConnectorManager } from "./connectors.js";
+import { PluginManager } from "./plugins.js";
+import { setExtraTemplates } from "./templates.js";
 import { MemoryRewriter, ProfileTools, memoryPromptSection } from "./memory.js";
 import { VaultTools } from "./vault.js";
 import { TeamTools } from "./team.js";
@@ -21,7 +23,9 @@ export { CONNECTOR_TEMPLATES, ConnectorManager, OAUTH_APPS } from "./connectors.
 export { MemoryRewriter, ProfileTools, applyProfileChanges, memoryPromptSection, profilePromptSection } from "./memory.js";
 export { VaultTools } from "./vault.js";
 export { TeamTools } from "./team.js";
-export { BOT_TEMPLATES, SQUAD_TEMPLATES, TEMPLATE_CATALOG, findSquad, findTemplate, instantiateTemplate, introductionMessage, uniqueBotName } from "./templates.js";
+export { BOT_TEMPLATES, SQUAD_TEMPLATES, TEMPLATE_CATALOG, allTemplates, findSquad, findTemplate, instantiateTemplate, introductionMessage, templateCatalog, uniqueBotName } from "./templates.js";
+export { PluginManager, parseGitSource, scanPluginFolder, splitFrontmatter } from "./plugins.js";
+export type { PluginScan, ScannedServer, ScannedSkill } from "./plugins.js";
 
 export type EventSink = (event: ServerEvent) => void;
 
@@ -89,6 +93,8 @@ export interface RuntimeOptions {
   serverUrl: string;
   /** Where uploaded attachments live (<id> files). */
   filesDir: string;
+  /** Where git plugins are cloned (default: <filesDir>/../plugins). */
+  pluginsDir?: string;
 }
 
 /** What the runtime knows about the turn currently running for a Bot (used by the MCP path). */
@@ -109,6 +115,7 @@ export class AgentRuntime {
   readonly automation: AutomationTools;
   readonly vault: VaultTools;
   readonly connectors: ConnectorManager;
+  readonly plugins: PluginManager;
   readonly team: TeamTools;
   private active = new Map<string, ActiveTurn>(); // botId → turn
   /** Bot-initiated wakes since the last user message, per conversation (loop guard). */
@@ -137,6 +144,12 @@ export class AgentRuntime {
     this.automation = new AutomationTools(opts.store, opts.emit, this.scheduler);
     this.vault = new VaultTools(opts.store, opts.computer, opts.emit);
     this.connectors = new ConnectorManager(opts.store, opts.emit, `${opts.serverUrl}/oauth/callback`);
+    this.plugins = new PluginManager(opts.store, this.connectors, opts.emit, opts.pluginsDir ?? join(dirname(opts.filesDir), "plugins"), opts.workspaceDir);
+    this.automation.useExtraSkills({
+      list: () => this.plugins.skillEntries().map((e) => ({ name: e.name, description: e.description, plugin: e.plugin })),
+      read: (name) => this.plugins.readSkill(name),
+    });
+    setExtraTemplates(() => this.plugins.agentTemplates());
     this.team = new TeamTools({
       store: opts.store,
       emit: opts.emit,

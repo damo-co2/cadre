@@ -29,6 +29,9 @@ import type {
   SecureFormRequest,
   ServerEvent,
   Skill,
+  InstalledPlugin,
+  PluginPreview,
+  PluginSuggestion,
   TemplateCatalog,
   UpdateBotInput,
   VaultItem,
@@ -206,6 +209,19 @@ export const api = {
     list: () => req<Skill[]>("/api/skills"),
     upsert: (input: UpsertSkillInput) => req<Skill>("/api/skills", { method: "PUT", body: JSON.stringify(input) }),
     delete: (id: string) => req<void>(`/api/skills/${id}`, { method: "DELETE" }),
+    /** A plugin skill's instructions, read from its folder. */
+    pluginContent: (name: string) => req<{ content: string }>(`/api/skills/plugin/${encodeURIComponent(name)}`),
+  },
+  plugins: {
+    list: () => req<InstalledPlugin[]>("/api/plugins"),
+    suggestions: () => req<PluginSuggestion[]>("/api/plugins/suggestions"),
+    preview: (source: string) => req<PluginPreview>("/api/plugins/preview", { method: "POST", body: JSON.stringify({ source }) }),
+    install: (input: { source: string; secrets: Record<string, string>; servers?: string[] }) =>
+      req<InstalledPlugin>("/api/plugins", { method: "POST", body: JSON.stringify(input) }),
+    refresh: (id: string) => req<InstalledPlugin>(`/api/plugins/${id}/refresh`, { method: "POST" }),
+    update: (id: string) => req<InstalledPlugin>(`/api/plugins/${id}/update`, { method: "POST" }),
+    setEnabled: (id: string, enabled: boolean) => req<InstalledPlugin>(`/api/plugins/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+    remove: (id: string, keepApps = false) => req<void>(`/api/plugins/${id}${keepApps ? "?keepApps=1" : ""}`, { method: "DELETE" }),
   },
   /** Multipart upload; the browser sets the content-type (with boundary) itself. */
   uploads: async (files: File[]): Promise<Attachment[]> => {

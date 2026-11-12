@@ -19,8 +19,9 @@ const CATEGORY_LABEL: Record<TemplateCategory, string> = {
   monitoring: "Monitoring",
   life: "Life",
   creative: "Creative",
+  plugins: "From your plugins",
 };
-const CATEGORY_ORDER: TemplateCategory[] = ["leadership", "work", "research", "engineering", "monitoring", "life", "creative"];
+const CATEGORY_ORDER: TemplateCategory[] = ["leadership", "work", "research", "engineering", "monitoring", "life", "creative", "plugins"];
 
 export function CreateBotDialog() {
   const setCreateOpen = useStore((s) => s.setCreateOpen);

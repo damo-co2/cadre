@@ -61,6 +61,7 @@ export interface Store {
   rules: RuleRepo;
   memories: MemoryRepo;
   skills: SkillRepo;
+  plugins: PluginRepo;
   routines: RoutineRepo;
   vault: VaultRepo;
   secureForms: SecureFormRepo;
@@ -100,6 +101,7 @@ export function openStore(dataDir: string): Store {
     rules: new RuleRepo(db),
     memories: new MemoryRepo(db),
     skills: new SkillRepo(db),
+    plugins: new PluginRepo(db),
     routines: new RoutineRepo(db),
     vault: new VaultRepo(db, secrets),
     secureForms: new SecureFormRepo(db),
@@ -498,6 +500,68 @@ export class SkillRepo {
 
   delete(id: string): void {
     this.db.delete(schema.skills).where(eq(schema.skills.id, id)).run();
+  }
+}
+
+// ---------- Plugins ----------
+
+export interface PluginRow {
+  id: string;
+  name: string;
+  sourceKind: "folder" | "git";
+  path: string;
+  url: string | null;
+  enabled: boolean;
+  /** serverKey → connector id, for the apps this plugin added. */
+  servers: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function rowToPlugin(r: typeof schema.plugins.$inferSelect): PluginRow {
+  let servers: Record<string, string> = {};
+  try {
+    servers = JSON.parse(r.servers) as Record<string, string>;
+  } catch {
+    /* keep empty */
+  }
+  return { ...r, sourceKind: r.sourceKind === "git" ? "git" : "folder", servers };
+}
+
+export class PluginRepo {
+  constructor(private db: Db) {}
+
+  list(): PluginRow[] {
+    return this.db.select().from(schema.plugins).orderBy(asc(schema.plugins.createdAt)).all().map(rowToPlugin);
+  }
+
+  get(id: string): PluginRow | undefined {
+    const r = this.db.select().from(schema.plugins).where(eq(schema.plugins.id, id)).get();
+    return r ? rowToPlugin(r) : undefined;
+  }
+
+  create(input: { name: string; sourceKind: "folder" | "git"; path: string; url: string | null; servers: Record<string, string> }): PluginRow {
+    const id = newId();
+    const ts = nowIso();
+    this.db
+      .insert(schema.plugins)
+      .values({ id, name: input.name, sourceKind: input.sourceKind, path: input.path, url: input.url, enabled: true, servers: JSON.stringify(input.servers), createdAt: ts, updatedAt: ts })
+      .run();
+    return this.get(id)!;
+  }
+
+  update(id: string, patch: Partial<Pick<PluginRow, "name" | "enabled" | "servers" | "path">>): PluginRow | undefined {
+    const set: Partial<typeof schema.plugins.$inferInsert> = { updatedAt: nowIso() };
+    if (patch.name !== undefined) set.name = patch.name;
+    if (patch.enabled !== undefined) set.enabled = patch.enabled;
+    if (patch.path !== undefined) set.path = patch.path;
+    if (patch.servers !== undefined) set.servers = JSON.stringify(patch.servers);
+    this.db.update(schema.plugins).set(set).where(eq(schema.plugins.id, id)).run();
+    return this.get(id);
+  }
+
+  delete(id: string): void {
+    this.db.delete(schema.plugins).where(eq(schema.plugins.id, id)).run();
   }
 }
 

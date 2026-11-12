@@ -8,7 +8,13 @@ import type { AppEnv } from "../context.js";
 
 export const skillsRoutes = new Hono<AppEnv>();
 
-skillsRoutes.get("/", (c) => c.json(c.get("store").skills.list()));
+skillsRoutes.get("/", (c) => c.json([...c.get("store").skills.list(), ...c.get("runtime").plugins.skillList()]));
+
+/** A plugin skill's instructions (read from its folder each time). */
+skillsRoutes.get("/plugin/:name", (c) => {
+  const content = c.get("runtime").plugins.readSkill(c.req.param("name"));
+  return content == null ? c.json({ error: "Not found" }, 404) : c.json({ content });
+});
 
 skillsRoutes.put("/", async (c) => {
   const parsed = upsertSkillSchema.safeParse(await c.req.json());

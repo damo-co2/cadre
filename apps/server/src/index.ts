@@ -25,6 +25,7 @@ import { moveOldWorkspace } from "./workspace.js";
 import { mcpRoute } from "./routes/mcp.js";
 import { templatesRoutes } from "./routes/templates.js";
 import { tasksRoutes } from "./routes/tasks.js";
+import { pluginsRoutes } from "./routes/plugins.js";
 import { pullRequestsRoutes } from "./routes/pullRequests.js";
 import { AccessManager, accessMiddleware, accessRoutes, rendererHandler } from "./access.js";
 import type { AppEnv } from "./context.js";
@@ -63,7 +64,7 @@ const FILES_DIR = resolve(DATA_DIR, "files");
 // A restart mid-reply leaves the reply "streaming" forever; nothing can resume it now.
 const orphans = store.messages.stopOrphans();
 if (orphans) console.log(`marked ${orphans} unfinished repl${orphans === 1 ? "y" : "ies"} as stopped`);
-const runtime = new AgentRuntime({ store, drivers, emit, computer, workspaceDir: WORKSPACE_DIR, serverUrl: SERVER_URL, filesDir: FILES_DIR });
+const runtime = new AgentRuntime({ store, drivers, emit, computer, workspaceDir: WORKSPACE_DIR, serverUrl: SERVER_URL, filesDir: FILES_DIR, pluginsDir: resolve(DATA_DIR, "plugins") });
 
 const app = new Hono<AppEnv>();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -111,6 +112,7 @@ app.route("/mcp", mcpRoute);
 app.route("/api/templates", templatesRoutes);
 app.route("/api/tasks", tasksRoutes);
 app.route("/api/pull-requests", pullRequestsRoutes);
+app.route("/api/plugins", pluginsRoutes);
 app.route("/api/access", accessRoutes(access));
 
 // Apps' sign-in pages send the browser back here (Connect apps → Connect).

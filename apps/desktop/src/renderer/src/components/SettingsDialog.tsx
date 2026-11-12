@@ -10,16 +10,18 @@ import { relativeTime } from "../lib/time";
 import { CustomRules } from "./CustomRules";
 import { Dialog } from "./Dialog";
 import { ModelPicker } from "./ModelPicker";
+import { PluginsPane } from "./PluginsPane";
 import { SkillsPane } from "./SkillsPane";
 import { VaultPane } from "./VaultPane";
 
-type Pane = "general" | "about" | "spaces" | "models" | "skills" | "computer" | "vault" | "phone" | "usage" | "updates";
+type Pane = "general" | "about" | "spaces" | "models" | "skills" | "plugins" | "computer" | "vault" | "phone" | "usage" | "updates";
 const PANES: { id: Pane; label: string }[] = [
   { id: "general", label: "General" },
   { id: "about", label: "About you" },
   { id: "spaces", label: "Spaces" },
   { id: "models", label: "Models" },
   { id: "skills", label: "Skills" },
+  { id: "plugins", label: "Plugins" },
   { id: "computer", label: "Computer" },
   { id: "vault", label: "Vault" },
   { id: "phone", label: "Phone" },
@@ -51,6 +53,7 @@ export function SettingsDialog() {
           {pane === "spaces" && <SpacesPane />}
           {pane === "models" && <ModelsPane />}
           {pane === "skills" && <SkillsPane />}
+          {pane === "plugins" && <PluginsPane />}
           {pane === "computer" && <ComputerPane />}
           {pane === "vault" && <VaultPane />}
           {pane === "phone" && <PhonePane />}

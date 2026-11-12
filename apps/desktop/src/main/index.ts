@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, Notification, shell, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, shell, type MenuItemConstructorOptions } from "electron";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -199,6 +199,12 @@ ipcMain.handle("cadre:getZoom", (e) => {
 ipcMain.on("cadre:setZoom", (e, factor: number) => setZoom(BrowserWindow.fromWebContents(e.sender), Number(factor) || 1));
 ipcMain.on("cadre:copy", (_e, text: string) => clipboard.writeText(String(text ?? "")));
 ipcMain.handle("cadre:isFocused", () => BrowserWindow.getAllWindows().some((w) => w.isFocused()));
+ipcMain.handle("cadre:pickFolder", async (e, title?: string) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const opts: Electron.OpenDialogOptions = { title: typeof title === "string" ? title : "Choose a folder", properties: ["openDirectory", "showHiddenFiles"] };
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+  return res.canceled ? null : (res.filePaths[0] ?? null);
+});
 
 app.whenReady().then(async () => {
   if (app.isPackaged) adoptShellPath();

@@ -345,7 +345,7 @@ export interface ScreenState {
 
 // ---------- Bot templates & squads ----------
 
-export type TemplateCategory = "leadership" | "work" | "research" | "engineering" | "monitoring" | "life" | "creative";
+export type TemplateCategory = "leadership" | "work" | "research" | "engineering" | "monitoring" | "life" | "creative" | "plugins";
 
 /** A ready-made Bot: role brief, seed memory, routines (cron/webhook), skills and Auto Review rules. */
 export interface BotTemplate {
@@ -630,7 +630,10 @@ export interface Skill {
   description: string;
   /** Markdown: when to use it, inputs, steps, validation, output, approval points. */
   content: string;
-  source: "written" | "taught";
+  /** "plugin": comes from an installed plugin or skills folder (read-only here; edit it at its source). */
+  source: "written" | "taught" | "plugin";
+  /** For plugin skills: the plugin's name. */
+  plugin?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -648,6 +651,103 @@ export const upsertSkillSchema = z.object({
   content: z.string().min(1).max(50_000),
   source: z.enum(["written", "taught"]).default("written"),
 });
+
+// ---------- Plugins (skills, apps and agents from any agent harness) ----------
+
+/** What a plugin folder was recognised as. */
+export type PluginFormat =
+  | "claude-plugin"
+  | "claude-marketplace"
+  | "codex-plugin"
+  | "codex-home"
+  | "gemini-extension"
+  | "opencode"
+  | "skills-folder";
+
+export interface PluginSkillInfo {
+  /** Name Bots and the composer use (made unique across all skills). */
+  name: string;
+  description: string;
+  /** skill: SKILL.md; command: a slash command / prompt file; guide: AGENTS.md, CLAUDE.md, GEMINI.md. */
+  kind: "skill" | "command" | "guide";
+  path: string;
+}
+
+export interface PluginAgentInfo {
+  name: string;
+  description: string;
+  /** Hire it from New Bot → From your plugins, or the Chief's bot_hire, with this template id. */
+  templateId: string;
+}
+
+export interface PluginServerInfo {
+  /** The server's key in the plugin's config, e.g. "jenkins". */
+  key: string;
+  transport: ConnectorTransport;
+  url: string | null;
+  command: string | null;
+  /** Variables the user fills in (tokens, keys) before it can connect. */
+  needs: string[];
+  /** Off in the plugin's own config. */
+  off: boolean;
+  /** Things Cadre can't carry over (e.g. extra headers). */
+  notes: string[];
+  /** The Connect apps entry it was added as (null: not added). */
+  connectorId: string | null;
+  connectorName: string | null;
+}
+
+export interface PluginContents {
+  name: string;
+  description: string;
+  version: string | null;
+  formats: PluginFormat[];
+  skills: PluginSkillInfo[];
+  agents: PluginAgentInfo[];
+  servers: PluginServerInfo[];
+  /** Parts Cadre doesn't run (hooks, remote marketplace entries…), in words. */
+  skipped: string[];
+}
+
+export interface InstalledPlugin extends PluginContents {
+  id: string;
+  /** folder: read live from your folder (edits show up straight away). git: Cadre's own clone. */
+  sourceKind: "folder" | "git";
+  path: string;
+  url: string | null;
+  enabled: boolean;
+  /** Set when the folder can't be read any more. */
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PluginPreview extends PluginContents {
+  path: string;
+  sourceKind: "folder" | "git";
+  url: string | null;
+  /** Already installed from this folder or URL. */
+  installedId: string | null;
+}
+
+/** Plugin and skills folders found on this computer (Claude Code, Codex, Gemini, OpenCode…). */
+export interface PluginSuggestion {
+  label: string;
+  harness: string;
+  path: string;
+  installedId: string | null;
+}
+
+export const pluginSourceSchema = z.object({ source: z.string().trim().min(1).max(1000) });
+
+export const installPluginSchema = pluginSourceSchema.extend({
+  /** Values for the variables apps need, by variable name. */
+  secrets: z.record(z.string(), z.string().max(10_000)).default({}),
+  /** Server keys to add as apps (default: every server that isn't off in the plugin). */
+  servers: z.array(z.string().max(100)).max(100).optional(),
+});
+
+export const updatePluginSchema = z.object({ enabled: z.boolean() });
 
 // ---------- Routines ----------
 
@@ -901,6 +1001,8 @@ export type ServerEvent =
   | { type: "routine.deleted"; routineId: string; botId: string }
   | { type: "routine.run"; run: RoutineRun }
   | { type: "skill.updated"; skill: Skill }
+  /** A plugin was installed, changed or removed: reload skills and Bot templates. */
+  | { type: "plugins.updated" }
   | { type: "skill.deleted"; skillId: string }
   | { type: "error"; message: string; conversationId?: string };
 

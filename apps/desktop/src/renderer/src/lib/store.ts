@@ -726,6 +726,11 @@ export const useStore = create<State>((set, get) => ({
       case "skill.updated":
         set({ skills: upsert(s.skills, e.skill) });
         break;
+      case "plugins.updated":
+        // Plugin skills and agents changed: reload skills; templates reload when the New Bot dialog opens.
+        set({ templates: null });
+        void api.skills.list().then((skills) => set({ skills })).catch(() => undefined);
+        break;
       case "task.updated":
         set({ tasks: isOpenTask(e.task) ? upsert(s.tasks, e.task) : s.tasks.filter((t) => t.id !== e.task.id) });
         break;

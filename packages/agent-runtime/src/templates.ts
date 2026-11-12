@@ -796,7 +796,25 @@ export const SQUAD_TEMPLATES: SquadTemplate[] = [
 
 export const TEMPLATE_CATALOG: TemplateCatalog = { bots: BOT_TEMPLATES, squads: SQUAD_TEMPLATES };
 
-export const findTemplate = (id: string): BotTemplate | undefined => BOT_TEMPLATES.find((t) => t.id === id);
+/** Templates from installed plugins' agents (set by the runtime). */
+let extraTemplates: () => BotTemplate[] = () => [];
+export function setExtraTemplates(fn: () => BotTemplate[]): void {
+  extraTemplates = fn;
+}
+/** Built-in templates plus every enabled plugin's agents. */
+export function allTemplates(): BotTemplate[] {
+  let extra: BotTemplate[] = [];
+  try {
+    extra = extraTemplates();
+  } catch {
+    /* a broken plugin folder never hides the built-ins */
+  }
+  return [...BOT_TEMPLATES, ...extra];
+}
+export function templateCatalog(): TemplateCatalog {
+  return { bots: allTemplates(), squads: SQUAD_TEMPLATES };
+}
+export const findTemplate = (id: string): BotTemplate | undefined => allTemplates().find((t) => t.id === id);
 export const findSquad = (id: string): SquadTemplate | undefined => SQUAD_TEMPLATES.find((t) => t.id === id);
 
 export interface InstantiateDeps {

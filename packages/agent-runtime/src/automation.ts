@@ -134,21 +134,44 @@ export class RoutineScheduler {
 
 // ---------- tools the Bot calls from chat ----------
 
+/** Skills that live outside the database (installed plugins and skills folders). */
+export interface ExtraSkillSource {
+  list(): { name: string; description: string; plugin: string }[];
+  read(name: string): string | null;
+}
+
 export class AutomationTools {
+  private extra: ExtraSkillSource | null = null;
+
   constructor(
     private store: Store,
     private emit: (e: ServerEvent) => void,
     private scheduler: RoutineScheduler,
   ) {}
 
+  /** Plugin skills join the saved ones in the index, skill_list and skill_read. */
+  useExtraSkills(src: ExtraSkillSource): void {
+    this.extra = src;
+  }
+
+  private extraSkills(): { name: string; description: string; plugin: string }[] {
+    try {
+      return this.extra?.list() ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   /** Skill index for the system prompt (names + descriptions only; content is read on demand). */
   skillsPromptSection(bot: Bot): string {
     const skills = this.store.skills.list();
+    const pluginSkills = this.extraSkills();
     const routines = this.store.routines.list(bot.id);
     const lines: string[] = [];
-    if (skills.length) {
+    if (skills.length || pluginSkills.length) {
       lines.push("Skills available to you (call skill_read before following one):");
       for (const s of skills) lines.push(`- ${s.name}: ${s.description}`);
+      for (const s of pluginSkills) lines.push(`- ${s.name}: ${s.description.length > 220 ? `${s.description.slice(0, 219)}…` : s.description} [${s.plugin}]`);
     } else {
       lines.push("No skills saved yet. When the user asks you to remember a process, save it with skill_save.");
     }
@@ -223,12 +246,18 @@ export class AutomationTools {
 
     switch (name) {
       case "skill_list": {
-        const skills = this.store.skills.list();
-        return text(skills.length ? skills.map((s) => `${s.name}: ${s.description}`).join("\n") : "No skills saved yet.");
+        const skills = [
+          ...this.store.skills.list().map((s) => `${s.name}: ${s.description}`),
+          ...this.extraSkills().map((s) => `${s.name}: ${s.description} [plugin: ${s.plugin}]`),
+        ];
+        return text(skills.length ? skills.join("\n") : "No skills saved yet.");
       }
       case "skill_read": {
-        const s = this.store.skills.getByName(String(a.name));
-        return s ? text(`# ${s.name}\n${s.description}\n\n${s.content}`) : fail(`No skill named "${a.name}". Use skill_list.`);
+        const wanted = String(a.name).replace(/^\//, "");
+        const s = this.store.skills.getByName(wanted);
+        if (s) return text(`# ${s.name}\n${s.description}\n\n${s.content}`);
+        const fromPlugin = this.extra?.read(wanted) ?? null;
+        return fromPlugin ? text(fromPlugin) : fail(`No skill named "${a.name}". Use skill_list.`);
       }
       case "skill_save": {
         const nm = skillNameSchema.safeParse(a.name);

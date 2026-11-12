@@ -10,6 +10,8 @@ declare global {
       getZoom?(): Promise<number>;
       setZoom?(factor: number): void;
       copyText?(text: string): void;
+      /** Native folder picker (hidden folders shown); null when cancelled. */
+      pickFolder?(title?: string): Promise<string | null>;
     };
   }
   interface WindowEventMap {

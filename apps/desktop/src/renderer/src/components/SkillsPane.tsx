@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, Plus, Trash2 } from "lucide-react";
 import type { Skill } from "@grokbot/shared";
 import { api } from "../lib/api";
@@ -29,7 +29,7 @@ export function SkillsPane() {
         <div className="mb-2 flex items-end justify-between">
           <div>
             <div className="text-[14.5px] font-semibold">Skills</div>
-            <div className="text-xs text-muted">A reusable set of instructions for how to do a task. Shared by every Bot; type / in the composer to use one.</div>
+            <div className="text-xs text-muted">A reusable set of instructions for how to do a task. Shared by every Bot; type / in the composer to use one. Skills from plugins (Settings → Plugins) show here too.</div>
           </div>
           {!creating && (
             <button onClick={() => setCreating(true)} className="flex shrink-0 items-center gap-1 rounded-app border border-line px-2.5 py-1 text-xs hover:bg-sunken">
@@ -53,22 +53,28 @@ export function SkillsPane() {
                         <div className="flex items-baseline gap-2">
                           <span className="truncate font-mono text-[14px] font-medium">/{k.name}</span>
                           <span className={`shrink-0 rounded px-1 text-[11.5px] ${k.source === "taught" ? "bg-accent/15 text-accent" : "bg-sunken text-muted"}`}>
-                            {k.source === "taught" ? "Taught" : "Written"}
+                            {k.source === "taught" ? "Taught" : k.source === "plugin" ? (k.plugin ?? "Plugin") : "Written"}
                           </span>
                         </div>
                         <div className="truncate text-xs text-muted">{k.description}</div>
                       </div>
                     </button>
-                    <span className="shrink-0 text-[12.5px] text-muted" title={k.updatedAt}>
-                      {relativeTime(k.updatedAt)}
-                    </span>
-                    <button onClick={() => void remove(k)} className="shrink-0 rounded-md p-1 text-muted hover:bg-danger/10 hover:text-danger" title="Delete skill">
-                      <Trash2 size={13} />
-                    </button>
+                    {k.source === "plugin" ? (
+                      <span className="shrink-0 text-[12.5px] text-muted" title="Comes from a plugin: change it at its source, or turn the plugin off in Settings → Plugins">
+                        read-only
+                      </span>
+                    ) : (
+                      <>
+                        <span className="shrink-0 text-[12.5px] text-muted" title={k.updatedAt}>
+                          {relativeTime(k.updatedAt)}
+                        </span>
+                        <button onClick={() => void remove(k)} className="shrink-0 rounded-md p-1 text-muted hover:bg-danger/10 hover:text-danger" title="Delete skill">
+                          <Trash2 size={13} />
+                        </button>
+                      </>
+                    )}
                   </div>
-                  {expanded && (
-                    <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-line bg-sunken/50 px-3 py-2 font-mono text-[13px]">{k.content}</pre>
-                  )}
+                  {expanded && (k.source === "plugin" ? <PluginSkillContent name={k.name} /> : <pre className={preClass}>{k.content}</pre>)}
                 </div>
               );
             })}
@@ -78,6 +84,24 @@ export function SkillsPane() {
       </section>
     </div>
   );
+}
+
+const preClass = "max-h-80 overflow-auto whitespace-pre-wrap break-words border-t border-line bg-sunken/50 px-3 py-2 font-mono text-[13px]";
+
+/** Plugin skills are read from their folder when opened (they can be long, and change at the source). */
+function PluginSkillContent({ name }: { name: string }) {
+  const [content, setContent] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.skills
+      .pluginContent(name)
+      .then((r) => live && setContent(r.content))
+      .catch((err: Error) => live && setContent(`Couldn't read it: ${err.message}`));
+    return () => {
+      live = false;
+    };
+  }, [name]);
+  return <pre className={preClass}>{content ?? "Loading…"}</pre>;
 }
 
 function NewSkillForm({ onClose, onError }: { onClose: () => void; onError: (e: string | null) => void }) {
