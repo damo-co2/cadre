@@ -270,20 +270,28 @@ export function Composer({
               <Mic size={15} />
             </IconButton>
           </div>
-          {streaming ? (
-            <button onClick={onStop} className="flex h-8 w-8 items-center justify-center rounded-full bg-fg text-bg" title="Stop now">
-              <Square size={12} fill="currentColor" />
-            </button>
-          ) : (
-            <button
-              onClick={() => void submit()}
-              disabled={!canSend}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition-opacity disabled:opacity-30"
-              title={busy ? "Uploading…" : "Send"}
-            >
-              <ArrowUp size={15} className={busy ? "animate-pulse" : ""} />
-            </button>
-          )}
+          {/* While Bots are replying you can still send: Stop sits next to Send, and replaces it only when there's nothing to send. */}
+          <div className="flex items-center gap-1.5">
+            {streaming && (
+              <button
+                onClick={onStop}
+                className={`flex h-8 w-8 items-center justify-center rounded-full ${canSend ? "border border-line text-muted hover:text-fg" : "bg-fg text-bg"}`}
+                title="Stop now"
+              >
+                <Square size={12} fill="currentColor" />
+              </button>
+            )}
+            {(!streaming || canSend) && (
+              <button
+                onClick={() => void submit()}
+                disabled={!canSend}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition-opacity disabled:opacity-30"
+                title={busy ? "Uploading…" : "Send"}
+              >
+                <ArrowUp size={15} className={busy ? "animate-pulse" : ""} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

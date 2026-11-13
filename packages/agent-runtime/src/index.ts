@@ -31,8 +31,9 @@ export type EventSink = (event: ServerEvent) => void;
 
 /**
  * A wake is anything that gives a Bot a model turn: a user message now; later routines,
- * webhooks, other Bots and background jobs. Every wake is routed into the per-conversation
- * queue so a conversation never runs two turns at once (mirrors Grok Bot's design).
+ * webhooks, other Bots and background jobs. Every wake goes into a queue per Bot per
+ * conversation: one Bot never runs two turns at once in a chat, but in a group the Bots work
+ * at the same time, and the user can talk to one while another is busy.
  */
 export interface WakeEvent {
   source: "user" | "routine" | "webhook" | "bot" | "background";
@@ -49,36 +50,49 @@ export interface WakeEvent {
 /** Everything a model can call: the computer's tools plus skill/routine tools. */
 export interface AnyToolSpec extends RuntimeToolSpec {}
 
+/** One lane per (conversation, Bot): turns in a lane run in order; lanes run side by side. */
 class ConversationQueue {
   private tails = new Map<string, Promise<void>>();
-  private aborts = new Map<string, AbortController>();
+  /** conversationId → botId → the running turn's abort controller. */
+  private aborts = new Map<string, Map<string, AbortController>>();
 
-  enqueue(conversationId: string, job: (signal: AbortSignal) => Promise<void>): Promise<void> {
-    const prev = this.tails.get(conversationId) ?? Promise.resolve();
+  enqueue(conversationId: string, botId: string, job: (signal: AbortSignal) => Promise<void>): Promise<void> {
+    const lane = `${conversationId}\u0000${botId}`;
+    const prev = this.tails.get(lane) ?? Promise.resolve();
     const run = prev
       .catch(() => undefined)
       .then(async () => {
         const ac = new AbortController();
-        this.aborts.set(conversationId, ac);
+        const running = this.aborts.get(conversationId) ?? new Map<string, AbortController>();
+        running.set(botId, ac);
+        this.aborts.set(conversationId, running);
         try {
           await job(ac.signal);
         } finally {
-          if (this.aborts.get(conversationId) === ac) this.aborts.delete(conversationId);
+          const now = this.aborts.get(conversationId);
+          if (now?.get(botId) === ac) now.delete(botId);
+          if (now && now.size === 0) this.aborts.delete(conversationId);
         }
       });
-    this.tails.set(conversationId, run);
+    this.tails.set(lane, run);
+    // Drop finished lanes so the map doesn't grow forever.
+    void run.finally(() => {
+      if (this.tails.get(lane) === run) this.tails.delete(lane);
+    }).catch(() => undefined);
     return run;
   }
 
+  /** Stops every turn running in the conversation (Stop in a group stops all its Bots). */
   stop(conversationId: string): boolean {
-    const ac = this.aborts.get(conversationId);
-    if (!ac) return false;
-    ac.abort();
+    const running = this.aborts.get(conversationId);
+    if (!running?.size) return false;
+    for (const ac of running.values()) ac.abort();
     return true;
   }
 
-  isBusy(conversationId: string): boolean {
-    return this.aborts.has(conversationId);
+  isBusy(conversationId: string, botId?: string): boolean {
+    const running = this.aborts.get(conversationId);
+    return botId ? !!running?.has(botId) : !!running?.size;
   }
 }
 
@@ -246,14 +260,22 @@ export class AgentRuntime {
     let result: Message | undefined;
     const id = ev.conversationId;
     this.pendingTurns.set(id, (this.pendingTurns.get(id) ?? 0) + 1);
+    // Counts this turn as finished, once. A turn calls it itself right before deciding whether to pass a
+    // discussion on: with Bots replying at the same time, only the last one to finish then sees 0 left.
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const left = (this.pendingTurns.get(id) ?? 1) - 1;
+      if (left > 0) this.pendingTurns.set(id, left);
+      else this.pendingTurns.delete(id);
+    };
     return this.queue
-      .enqueue(id, async (signal) => {
+      .enqueue(id, ev.botId, async (signal) => {
         try {
-          result = await this.runTurn(ev, signal);
+          result = await this.runTurn(ev, signal, release);
         } finally {
-          const left = (this.pendingTurns.get(id) ?? 1) - 1;
-          if (left > 0) this.pendingTurns.set(id, left);
-          else this.pendingTurns.delete(id);
+          release();
         }
       })
       .then(() => result);
@@ -755,7 +777,7 @@ export class AgentRuntime {
     return this.opts.computer.callTool(botId, name, input, { signal: this.active.get(botId)?.signal, confineTo });
   }
 
-  private async runTurn(ev: WakeEvent, signal: AbortSignal): Promise<Message | undefined> {
+  private async runTurn(ev: WakeEvent, signal: AbortSignal, release: () => void = () => undefined): Promise<Message | undefined> {
     const { store, drivers, emit } = this.opts;
     const bot = store.bots.get(ev.botId);
     if (!bot) return undefined;
@@ -797,6 +819,15 @@ export class AgentRuntime {
             ? { role: "user" as const, content: `[${nameOf(m.botId)}]: ${content}` }
             : { role: "user" as const, content };
       });
+    // Group Bots work at the same time: say who is still mid-turn, so "is everyone working?" has an answer
+    // and nobody repeats work a teammate hasn't posted yet.
+    if (conversation?.kind === "group") {
+      const busy = conversation.botIds.filter((id) => id !== bot.id && this.queue.isBusy(ev.conversationId, id)).map((id) => nameOf(id));
+      const last = chat.at(-1);
+      if (busy.length && last?.role === "user") {
+        last.content += `\n\n(Cadre: still working on their reply in this group right now: ${busy.join(", ")}.)`;
+      }
+    }
     if (ev.note) chat.push({ role: "user", content: ev.note });
     // Models reject a turn whose last message is their own: say plainly that nothing new was said.
     if (chat.at(-1)?.role === "assistant") {
@@ -916,7 +947,10 @@ export class AgentRuntime {
       emit({ type: "bot.status", botId: bot.id, status: "idle" });
       if (conversation?.kind === "group") {
         if (ev.checkIn) this.resumeAfterCheck(conversation);
-        else this.continueDiscussion(conversation, bot, { quiet: true, handBack: false, messageId: undefined });
+        else {
+          release();
+          this.continueDiscussion(conversation, bot, { quiet: true, handBack: false, messageId: undefined });
+        }
       }
       return undefined;
     }
@@ -942,6 +976,7 @@ export class AgentRuntime {
       emit({ type: "notify", botId: bot.id, conversationId: ev.conversationId, title: bot.name, body: text.replace(/\s+/g, " ").slice(0, 160), kind: "reply" });
     }
 
+    release();
     // Re-read the group: members may have changed during this turn (e.g. the Chief used group_invite).
     const groupNow = conversation?.kind === "group" ? (store.conversations.get(ev.conversationId) ?? conversation) : conversation;
     // The Chief checked in and chose to step in: the discussion stops here until the user speaks.
@@ -984,8 +1019,8 @@ export class AgentRuntime {
       this.discussions.delete(conversation.id); // nobody has anything new: the discussion has run its course
       return;
     }
-    // Others are still queued (e.g. the rest of the opening replies): the last of them passes it on.
-    if ((this.pendingTurns.get(conversation.id) ?? 0) > 1) return;
+    // Others are still running or queued (e.g. the rest of the opening replies): the last of them passes it on.
+    if ((this.pendingTurns.get(conversation.id) ?? 0) > 0) return;
     // Never hand the turn back to whoever spoke last (with 2 Bots, a quiet reply ends the discussion).
     const lastAuthor = [...this.opts.store.messages.list(conversation.id)].reverse().find((m) => m.role === "bot")?.botId ?? null;
     const next = this.nextSpeaker(conversation, [speaker.id, lastAuthor]);
@@ -1050,7 +1085,8 @@ export class AgentRuntime {
    */
   private chiefCheckIn(conversation: Conversation, speaker: Bot, held: string[]): boolean {
     const chief = this.chiefFor(conversation, speaker);
-    if (!chief) return false;
+    // The Chief just spoke in the discussion itself: no need to check in on its own turn (and never twice in a row).
+    if (!chief || chief.id === speaker.id) return false;
     this.checks.set(conversation.id, held);
     const turns = this.chain.get(conversation.id) ?? 0;
     const note = [
