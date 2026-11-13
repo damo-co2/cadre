@@ -1,7 +1,7 @@
 {
   "name": "cadre",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Open, model-agnostic AI teammates: named Bots on a persistent computer, skills, routines, approvals.",
   "workspaces": [
     "packages/*",
