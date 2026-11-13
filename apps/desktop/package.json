@@ -1,6 +1,6 @@
 {
   "name": "@grokbot/desktop",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Cadre desktop app",
   "main": "./out/main/index.js",
