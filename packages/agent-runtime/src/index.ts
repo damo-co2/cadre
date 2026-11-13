@@ -14,6 +14,7 @@ import { ConnectorManager } from "./connectors.js";
 import { PluginManager } from "./plugins.js";
 import { setExtraTemplates } from "./templates.js";
 import { MemoryRewriter, ProfileTools, memoryPromptSection } from "./memory.js";
+import { HistoryCompactor } from "./context.js";
 import { VaultTools } from "./vault.js";
 import { TeamTools } from "./team.js";
 
@@ -22,6 +23,7 @@ export { AutomationTools, RoutineScheduler, validateCron, type RuntimeToolSpec }
 export { CONNECTOR_TEMPLATES, ConnectorManager, OAUTH_APPS } from "./connectors.js";
 export { MemoryRewriter, ProfileTools, applyProfileChanges, memoryPromptSection, profilePromptSection } from "./memory.js";
 export { VaultTools } from "./vault.js";
+export { HistoryCompactor, HISTORY_BUDGET_CHARS, KEEP_RECENT_CHARS, COMPACT_KEEP_MESSAGES, split } from "./context.js";
 export { TeamTools } from "./team.js";
 export { BOT_TEMPLATES, SQUAD_TEMPLATES, TEMPLATE_CATALOG, allTemplates, findSquad, findTemplate, instantiateTemplate, introductionMessage, templateCatalog, uniqueBotName } from "./templates.js";
 export { PluginManager, parseGitSource, scanPluginFolder, splitFrontmatter } from "./plugins.js";
@@ -124,6 +126,8 @@ export class AgentRuntime {
   private queue = new ConversationQueue();
   readonly approvals: ApprovalGate;
   readonly memory: MemoryRewriter;
+  /** Summarises long histories for turns that have no model session (see context.ts). */
+  readonly context: HistoryCompactor;
   readonly profile: ProfileTools;
   readonly scheduler: RoutineScheduler;
   readonly automation: AutomationTools;
@@ -153,6 +157,7 @@ export class AgentRuntime {
     this.approvals = new ApprovalGate(opts.store, opts.emit);
     const profileChanged = (learned?: string[]) => opts.emit({ type: "profile.updated", ...(learned?.length ? { learned } : {}) });
     this.memory = new MemoryRewriter(opts.store, opts.drivers, (bot) => this.resolveModelRef(bot), profileChanged);
+    this.context = new HistoryCompactor(opts.store, opts.drivers, (bot) => this.resolveModelRef(bot));
     this.profile = new ProfileTools(opts.store, profileChanged);
     this.scheduler = new RoutineScheduler(opts.store, opts.emit, (routine, run, payload) => this.runRoutine(routine, run, payload));
     this.automation = new AutomationTools(opts.store, opts.emit, this.scheduler);
@@ -191,6 +196,21 @@ export class AgentRuntime {
     this.opts.emit({ type: "message.created", message: msg });
     this.wake({ source: fromBotId ? "bot" : "user", conversationId: conv.id, botId, messageId: msg.id });
     return msg;
+  }
+
+  /**
+   * "Compact": summarise all but the newest few messages, and drop every Bot's model session in the chat so
+   * each starts its next turn fresh from the summary plus recent messages. Returns how many were summarised.
+   */
+  async compact(conversationId: string): Promise<number> {
+    const conv = this.opts.store.conversations.get(conversationId);
+    if (!conv) throw new Error("Chat not found");
+    const members = conv.botIds.map((id) => this.opts.store.bots.get(id)).filter((b): b is Bot => !!b);
+    const bot = members.find((b) => b.isPrimary) ?? members[0];
+    if (!bot) throw new Error("This chat has no Bots");
+    const n = await this.context.compact(conversationId, bot);
+    this.opts.store.driverSessions.clearConversation(conversationId);
+    return n;
   }
 
   stop(conversationId: string): boolean {
@@ -809,7 +829,11 @@ export class AgentRuntime {
     // System messages (routine triggers, handoffs) are user-side turns. In a group, other Bots'
     // messages are user-side turns labelled "[Name]: …" so the model can tell who said what.
     const nameOf = (id: string | null) => (id ? (store.bots.get(id)?.name ?? "Bot") : "Bot");
-    const chat: ChatMessage[] = history
+    // With a model session (Claude Code, Codex) the CLI holds the history and compacts it itself. Without one
+    // (API keys, or a CLI starting fresh) Cadre sends it: the chat's summary plus what came after, kept in budget.
+    const sessionId = store.driverSessions.get(ev.conversationId, bot.id, provider);
+    const fitted = sessionId ? { summary: null, messages: history } : await this.context.fit(ev.conversationId, bot, history, signal);
+    const chat: ChatMessage[] = fitted.messages
       .filter((m) => m.status !== "error" && (m.content.trim() || m.attachments.length))
       .map((m) => {
         const content = m.attachments.length ? `${m.content}\n\n${this.describeAttachments(m)}`.trim() : m.content;
@@ -819,6 +843,9 @@ export class AgentRuntime {
             ? { role: "user" as const, content: `[${nameOf(m.botId)}]: ${content}` }
             : { role: "user" as const, content };
       });
+    if (fitted.summary) {
+      chat.unshift({ role: "user", content: `(Cadre: summary of the earlier part of this chat, which is no longer shown word for word.)\n\n${fitted.summary}` });
+    }
     // Group Bots work at the same time: say who is still mid-turn, so "is everyone working?" has an answer
     // and nobody repeats work a teammate hasn't posted yet.
     if (conversation?.kind === "group") {
@@ -877,7 +904,6 @@ export class AgentRuntime {
     };
 
     this.active.set(bot.id, { conversationId: ev.conversationId, messageId: reply.id, signal, pushPart, userMessages });
-    const sessionId = store.driverSessions.get(ev.conversationId, bot.id, provider);
 
     try {
       for await (const d of driver.run({

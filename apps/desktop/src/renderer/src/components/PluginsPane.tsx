@@ -11,6 +11,7 @@ const FORMAT_LABEL: Record<string, string> = {
   "codex-home": "Codex",
   "gemini-extension": "Gemini CLI extension",
   opencode: "OpenCode",
+  copilot: "Copilot",
   "skills-folder": "Skills folder",
 };
 

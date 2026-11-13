@@ -7,6 +7,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   codex: "ChatGPT",
   "gemini-cli": "Gemini",
   opencode: "OpenCode",
+  copilot: "Copilot",
   anthropic: "Anthropic API",
   openai: "OpenAI API",
   google: "Google AI",

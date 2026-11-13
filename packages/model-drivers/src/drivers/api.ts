@@ -9,7 +9,7 @@ import type { ProviderId } from "@grokbot/shared";
 import { PROVIDERS } from "../providers.js";
 import type { DriverEvent, ModelDriver, ProviderCredentials, ProviderStatus, TurnInput } from "../types.js";
 
-type ApiProviderId = Exclude<ProviderId, "claude-code" | "codex" | "gemini-cli" | "opencode">;
+type ApiProviderId = Exclude<ProviderId, "claude-code" | "codex" | "gemini-cli" | "opencode" | "copilot">;
 
 /**
  * One driver for every API-key provider, built on the Vercel AI SDK so streaming,
@@ -169,6 +169,9 @@ export class ApiDriver implements ModelDriver {
       abortSignal: input.signal,
       // Let the SDK loop over tool calls up to a sane bound (phase 3 replaces this with the runtime's own loop).
       stopWhen: ({ steps }) => steps.length >= 25,
+      // Anthropic: automatic prompt caching. Each tool step resends the same instructions and history; with a
+      // cache breakpoint on the request, those repeats are read from the cache instead of billed in full.
+      ...(this.provider === "anthropic" ? { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" as const } } } } : {}),
     });
 
     try {

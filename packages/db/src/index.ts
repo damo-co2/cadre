@@ -64,6 +64,7 @@ export interface Store {
   skills: SkillRepo;
   plugins: PluginRepo;
   pins: PinRepo;
+  summaries: SummaryRepo;
   routines: RoutineRepo;
   vault: VaultRepo;
   secureForms: SecureFormRepo;
@@ -105,6 +106,7 @@ export function openStore(dataDir: string): Store {
     skills: new SkillRepo(db),
     plugins: new PluginRepo(db),
     pins: new PinRepo(db),
+    summaries: new SummaryRepo(db),
     routines: new RoutineRepo(db),
     vault: new VaultRepo(db, secrets),
     secureForms: new SecureFormRepo(db),
@@ -565,6 +567,33 @@ export class PluginRepo {
 
   delete(id: string): void {
     this.db.delete(schema.plugins).where(eq(schema.plugins.id, id)).run();
+  }
+}
+
+// ---------- Conversation summaries ----------
+
+export interface ConversationSummary {
+  conversationId: string;
+  throughId: string;
+  throughAt: string;
+  text: string;
+  updatedAt: string;
+}
+
+export class SummaryRepo {
+  constructor(private db: Db) {}
+
+  get(conversationId: string): ConversationSummary | undefined {
+    return this.db.select().from(schema.conversationSummaries).where(eq(schema.conversationSummaries.conversationId, conversationId)).get();
+  }
+
+  set(conversationId: string, input: { throughId: string; throughAt: string; text: string }): void {
+    const row = { conversationId, ...input, updatedAt: nowIso() };
+    this.db.insert(schema.conversationSummaries).values(row).onConflictDoUpdate({ target: schema.conversationSummaries.conversationId, set: row }).run();
+  }
+
+  delete(conversationId: string): void {
+    this.db.delete(schema.conversationSummaries).where(eq(schema.conversationSummaries.conversationId, conversationId)).run();
   }
 }
 
@@ -1234,6 +1263,7 @@ export class ConversationRepo {
     this.db.delete(schema.messages).where(eq(schema.messages.conversationId, id)).run();
     this.db.delete(schema.conversationMembers).where(eq(schema.conversationMembers.conversationId, id)).run();
     this.db.delete(schema.driverSessions).where(eq(schema.driverSessions.conversationId, id)).run();
+    this.db.delete(schema.conversationSummaries).where(eq(schema.conversationSummaries.conversationId, id)).run();
     this.db.delete(schema.conversations).where(eq(schema.conversations.id, id)).run();
   }
 
@@ -1241,6 +1271,7 @@ export class ConversationRepo {
   clearMessages(id: string): void {
     this.db.delete(schema.messages).where(eq(schema.messages.conversationId, id)).run();
     this.db.delete(schema.driverSessions).where(eq(schema.driverSessions.conversationId, id)).run();
+    this.db.delete(schema.conversationSummaries).where(eq(schema.conversationSummaries.conversationId, id)).run();
   }
 }
 
@@ -1512,6 +1543,11 @@ export class DriverSessionRepo {
         ),
       )
       .run();
+  }
+
+  /** Forget every model session in a chat: each Bot's next turn starts fresh from Cadre's history. */
+  clearConversation(conversationId: string): void {
+    this.db.delete(schema.driverSessions).where(eq(schema.driverSessions.conversationId, conversationId)).run();
   }
 }
 

@@ -98,6 +98,16 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     defaultModel: "gemini-2.5-pro",
     curatedModels: ["gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
   },
+  copilot: {
+    id: "copilot",
+    kind: "cli",
+    label: "GitHub Copilot (subscription)",
+    blurb: "Uses your GitHub Copilot plan through the Copilot CLI. Experimental.",
+    bin: "copilot",
+    defaultModel: "auto",
+    // Model names from GitHub's Copilot CLI docs; "auto" lets Copilot choose. Run /model in `copilot` for your plan's list.
+    curatedModels: ["auto", "claude-haiku-4.5", "gpt-5.3-codex", "gpt-6-astra"],
+  },
   opencode: {
     id: "opencode",
     kind: "cli",

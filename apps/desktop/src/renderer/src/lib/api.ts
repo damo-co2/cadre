@@ -149,6 +149,7 @@ export const api = {
       req<Message>(`/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify(input) }),
     stop: (id: string) => req<{ stopped: boolean }>(`/api/conversations/${id}/stop`, { method: "POST" }),
     reset: (id: string) => req<{ ok: boolean }>(`/api/conversations/${id}/reset`, { method: "POST" }),
+    compact: (id: string) => req<{ summarized: number }>(`/api/conversations/${id}/compact`, { method: "POST" }),
   },
   defaultModel: (spaceId?: string | null) =>
     req<{ modelRef: string; source: "space" | "app" | "auto"; spaceName: string | null }>(`/api/settings/default-model${spaceId ? `?spaceId=${encodeURIComponent(spaceId)}` : ""}`),

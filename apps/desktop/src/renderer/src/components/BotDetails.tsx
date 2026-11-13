@@ -7,11 +7,13 @@ import { ModelPicker } from "./ModelPicker";
 import { defaultLabel, prettyModel, useDefaultModel } from "../lib/defaultModel";
 import { RoutinesList } from "./RoutinesList";
 import { Library } from "./Library";
+import { CompactButton } from "./CompactButton";
 
 export function BotDetails({ bot, onClose }: { bot: Bot; onClose: () => void }) {
   const updateBot = useStore((s) => s.updateBot);
   const deleteBot = useStore((s) => s.deleteBot);
   const resetConversation = useStore((s) => s.resetConversation);
+  const conversationId = useStore((s) => s.conversation?.id);
   const spaces = useStore((s) => s.spaces);
   const moveBotToSpace = useStore((s) => s.moveBotToSpace);
   // A Bot without its own model uses its space's default, then the app default.
@@ -153,6 +155,7 @@ export function BotDetails({ bot, onClose }: { bot: Bot; onClose: () => void }) 
           >
             Reset conversation
           </Btn>
+          {conversationId && <CompactButton conversationId={conversationId} className="col-span-2" />}
           <Btn
             danger
             onClick={() => {

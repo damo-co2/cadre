@@ -5,6 +5,7 @@ import { MAX_GROUP_BOTS, MIN_GROUP_BOTS } from "@grokbot/shared";
 import { useStore } from "../lib/store";
 import { BotAvatar } from "./BotAvatar";
 import { Library } from "./Library";
+import { CompactButton } from "./CompactButton";
 
 /** Header popover for a group chat: members (add or remove), rename, delete. */
 export function GroupDetails({ group, members, onClose }: { group: Conversation; members: Bot[]; onClose: () => void }) {
@@ -114,6 +115,7 @@ export function GroupDetails({ group, members, onClose }: { group: Conversation;
           <Library />
         </div>
 
+        <CompactButton conversationId={group.id} className="mb-1.5 text-[14px]" />
         <button
           onClick={() => {
             if (window.confirm("Delete this group chat? Its messages are erased. The Bots and their own chats are kept.")) {

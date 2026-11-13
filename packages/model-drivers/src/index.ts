@@ -5,12 +5,13 @@ import { ClaudeCodeDriver } from "./drivers/cli-claude.js";
 import { CodexDriver } from "./drivers/cli-codex.js";
 import { GeminiCliDriver } from "./drivers/cli-gemini.js";
 import { OpenCodeDriver } from "./drivers/cli-opencode.js";
+import { CopilotCliDriver } from "./drivers/cli-copilot.js";
 import { PROVIDERS } from "./providers.js";
 import type { DriverEvent, ModelDriver, ProviderCredentials } from "./types.js";
 
 export * from "./types.js";
 export { PROVIDERS } from "./providers.js";
-export { ApiDriver, ClaudeCodeDriver, CodexDriver, GeminiCliDriver, OpenCodeDriver };
+export { ApiDriver, ClaudeCodeDriver, CodexDriver, CopilotCliDriver, GeminiCliDriver, OpenCodeDriver };
 
 export type CredentialsLookup = (provider: ProviderId) => ProviderCredentials;
 
@@ -33,6 +34,8 @@ export class DriverRegistry {
         return new GeminiCliDriver();
       case "opencode":
         return new OpenCodeDriver();
+      case "copilot":
+        return new CopilotCliDriver();
       default:
         return new ApiDriver(provider, this.lookup(provider));
     }

@@ -99,6 +99,17 @@ conversationsRoutes.post("/:id/stop", (c) => {
   return c.json({ stopped: closed.length > 0 });
 });
 
+/** Summarise all but the newest few messages; every Bot's next turn starts fresh from the summary. */
+conversationsRoutes.post("/:id/compact", async (c) => {
+  const conv = c.get("store").conversations.get(c.req.param("id"));
+  if (!conv) return c.json({ error: "Not found" }, 404);
+  try {
+    return c.json({ summarized: await c.get("runtime").compact(conv.id) });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 500);
+  }
+});
+
 conversationsRoutes.post("/:id/reset", (c) => {
   const store = c.get("store");
   const conv = store.conversations.get(c.req.param("id"));

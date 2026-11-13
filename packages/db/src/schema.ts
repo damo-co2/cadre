@@ -138,6 +138,16 @@ export const plugins = sqliteTable("plugins", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/** A chat's older history condensed by a model, used in place of those messages when the history gets long. */
+export const conversationSummaries = sqliteTable("conversation_summaries", {
+  conversationId: text("conversation_id").primaryKey(),
+  /** The last message the summary covers. */
+  throughId: text("through_id").notNull(),
+  throughAt: text("through_at").notNull(),
+  text: text("text").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 /** Messages the user pinned to come back to (shown on Team pulse). */
 export const pins = sqliteTable("pins", {
   id: text("id").primaryKey(),
@@ -403,6 +413,13 @@ CREATE TABLE IF NOT EXISTS plugins (
   enabled INTEGER NOT NULL DEFAULT 1,
   servers TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+  conversation_id TEXT PRIMARY KEY,
+  through_id TEXT NOT NULL,
+  through_at TEXT NOT NULL,
+  text TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS pins (
