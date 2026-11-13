@@ -1295,6 +1295,25 @@ export class MessageRepo {
       .map(rowToMessage);
   }
 
+  /** A page for the chat view: the newest `limit` messages written before `beforeId` (or the newest overall), oldest first. */
+  page(conversationId: string, limit: number, beforeId?: string): Message[] {
+    let older = sql`1 = 1`;
+    if (beforeId) {
+      const anchor = this.db.get<{ created_at: string; rid: number }>(sql`select created_at, rowid as rid from messages where id = ${beforeId}`);
+      if (!anchor) return [];
+      older = sql`(${schema.messages.createdAt} < ${anchor.created_at} or (${schema.messages.createdAt} = ${anchor.created_at} and rowid < ${anchor.rid}))`;
+    }
+    return this.db
+      .select()
+      .from(schema.messages)
+      .where(and(eq(schema.messages.conversationId, conversationId), older))
+      .orderBy(desc(schema.messages.createdAt), desc(sql`rowid`))
+      .limit(limit)
+      .all()
+      .reverse()
+      .map(rowToMessage);
+  }
+
   get(id: string): Message | undefined {
     const r = this.db.select().from(schema.messages).where(eq(schema.messages.id, id)).get();
     return r ? rowToMessage(r) : undefined;

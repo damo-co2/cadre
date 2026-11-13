@@ -140,7 +140,11 @@ export const api = {
     update: (id: string, patch: { title?: string | null; botIds?: string[] }) =>
       req<Conversation>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
     delete: (id: string) => req<void>(`/api/conversations/${id}`, { method: "DELETE" }),
-    messages: (id: string) => req<Message[]>(`/api/conversations/${id}/messages`),
+    /** The newest `limit` messages, or the `limit` before message `before`; oldest first. */
+    messages: (id: string, opts: { limit?: number; before?: string } = {}) =>
+      req<Message[]>(
+        `/api/conversations/${id}/messages${opts.limit ? `?limit=${opts.limit}${opts.before ? `&before=${encodeURIComponent(opts.before)}` : ""}` : ""}`,
+      ),
     send: (id: string, input: { content: string; attachmentIds?: string[] }) =>
       req<Message>(`/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify(input) }),
     stop: (id: string) => req<{ stopped: boolean }>(`/api/conversations/${id}/stop`, { method: "POST" }),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { ArrowRightLeft, ChevronRight, ClipboardList, Download, ExternalLink, FileText, GraduationCap, Hand, Loader2, Pin, Repeat, Reply, UserMinus, UserPlus, Wrench } from "lucide-react";
 import type { Attachment, Bot, Message, MessagePart, ReplyQuote } from "@grokbot/shared";
 import { messageText, parseReply, plainPreview } from "@grokbot/shared";
@@ -11,8 +11,11 @@ import { SecureFormCard } from "./SecureFormCard";
 import { Collapsible, pretty } from "./Collapsible";
 import { Markdown } from "./Markdown";
 
-/** One transcript entry. `bot` is the fallback sender for 1:1 chats; in groups the sender is looked up by message.botId. */
-export function MessageBubble({ message, bot }: { message: Message; bot?: Bot }) {
+/**
+ * One transcript entry. `bot` is the fallback sender for 1:1 chats; in groups the sender is looked up by message.botId.
+ * Memoized: a streaming reply updates one message object, so only that bubble re-renders.
+ */
+export const MessageBubble = memo(function MessageBubble({ message, bot }: { message: Message; bot?: Bot }) {
   const sender = useStore((s) => (message.botId ? s.bots.find((b) => b.id === message.botId) : undefined)) ?? bot;
   if (message.role === "user") {
     const { reply, body } = parseReply(message.content);
@@ -121,7 +124,7 @@ export function MessageBubble({ message, bot }: { message: Message; bot?: Bot })
       </div>
     </div>
   );
-}
+});
 
 /** Reply to this message: the composer shows it, and the sent message carries a short quote of it. */
 function ReplyButton({ message, author }: { message: Message; author: string }) {
@@ -141,12 +144,8 @@ function ReplyButton({ message, author }: { message: Message; author: string }) 
 
 /** The quoted message at the top of a reply. Click to jump to it. */
 function QuoteCard({ reply }: { reply: ReplyQuote }) {
-  const jump = () => {
-    const s = useStore.getState();
-    const original = s.messages.find((m) => m.id.startsWith(reply.messageId));
-    if (original) useStore.setState({ focusMessageId: original.id });
-    else useStore.setState({ error: "That message is older than the last 500 in this chat." });
-  };
+  // The chat view finds it, loading older messages if needed.
+  const jump = () => useStore.setState({ focusMessageId: reply.messageId });
   return (
     <button onClick={jump} className="mb-1.5 block w-full rounded-[8px] border-l-2 border-accent bg-black/10 px-2.5 py-1 text-left text-[13px] font-normal opacity-80 hover:opacity-100" title="Go to the original message">
       <span className="font-semibold">{reply.author}</span>

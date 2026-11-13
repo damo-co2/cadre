@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, LayoutGrid, Zap, Menu, Monitor, ShieldAlert } from "lucide-react";
 import type { Bot } from "@grokbot/shared";
 import { formatReply } from "@grokbot/shared";
@@ -61,9 +61,30 @@ export function ChatView() {
     [isGroup, conversation, bots],
   );
 
+  // Long chats load the newest page; scrolling near the top loads the page before it. Keep the
+  // reader's place: remember the distance from the bottom and restore it once older messages are in.
+  const hasOlder = useStore((s) => s.hasOlder);
+  const loadingOlder = useStore((s) => s.loadingOlder);
+  const loadOlder = useStore((s) => s.loadOlder);
+  const keepFromBottom = useRef<number | null>(null);
+  const loadEarlier = () => {
+    const el = scroller.current;
+    if (!el || !useStore.getState().hasOlder || useStore.getState().loadingOlder) return;
+    keepFromBottom.current = el.scrollHeight - el.scrollTop;
+    void loadOlder().then((added) => {
+      if (!added) keepFromBottom.current = null;
+    });
+  };
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || keepFromBottom.current === null) return;
+    el.scrollTop = el.scrollHeight - keepFromBottom.current;
+  }, [messages]);
+
   // Follow the conversation: jump to the bottom when a conversation loads or the user sends,
   // and keep following while streaming unless the user has scrolled up to read.
   const lastConversation = useRef<string | null>(null);
+  const lastMessageId = useRef<string | null>(null);
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -71,27 +92,43 @@ export function ChatView() {
     const switched = convId !== lastConversation.current;
     lastConversation.current = convId;
     const last = messages.at(-1);
+    const appended = !!last && last.id !== lastMessageId.current;
+    lastMessageId.current = last?.id ?? null;
+    if (keepFromBottom.current !== null && !switched) {
+      // Older messages were just added above: the layout effect kept the reader's place.
+      keepFromBottom.current = null;
+      return;
+    }
+    keepFromBottom.current = null;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    if (switched || last?.role === "user" || nearBottom) el.scrollTop = el.scrollHeight;
+    if (switched || (appended && last?.role === "user") || nearBottom) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // Opening a pin: once its message is on screen, scroll to it and flash it.
+  // Opening a pin or a reply's quote: load older pages until the message is there, then scroll to it
+  // and flash it. `focusMessageId` may be a full id or the 8-character prefix a reply quote carries.
   const focusMessageId = useStore((s) => s.focusMessageId);
   const [flashId, setFlashId] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     if (!focusMessageId) return;
-    const pin = useStore.getState().pins.find((p) => p.messageId === focusMessageId);
+    const state = useStore.getState();
+    const pin = state.pins.find((p) => p.messageId === focusMessageId);
     // Wait until the pin's chat has loaded.
     if (pin && messages[0]?.conversationId !== pin.conversationId) return;
-    useStore.setState({ focusMessageId: null });
-    const el = document.getElementById(`msg-${focusMessageId}`);
+    const target = messages.find((m) => m.id === focusMessageId || (focusMessageId.length < 36 && m.id.startsWith(focusMessageId)));
+    const el = target ? document.getElementById(`msg-${target.id}`) : null;
     if (!el) {
-      if (pin) useStore.setState({ error: "That pinned message is older than the last 500 in this chat. Its text is still on the pin in Team pulse." });
+      if (state.hasOlder) {
+        // Not loaded yet: fetch the page before; this effect runs again when it arrives.
+        if (!state.loadingOlder) void state.loadOlder().then((added) => !added && useStore.setState({ focusMessageId: null }));
+        return;
+      }
+      useStore.setState({ focusMessageId: null, error: pin ? "That pinned message is no longer in this chat. Its text is still on the pin in Team pulse." : "That message is no longer in this chat." });
       return;
     }
+    useStore.setState({ focusMessageId: null });
     el.scrollIntoView({ block: "center" });
-    setFlashId(focusMessageId);
+    setFlashId(target!.id);
     clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlashId(null), 1800);
   }, [messages, focusMessageId]);
@@ -214,7 +251,13 @@ export function ChatView() {
             ))}
         </header>
 
-        <div ref={scroller} className="no-drag flex-1 overflow-y-auto">
+        <div
+          ref={scroller}
+          onScroll={(e) => {
+            if (hasOlder && e.currentTarget.scrollTop < 400) loadEarlier();
+          }}
+          className="no-drag flex-1 overflow-y-auto"
+        >
           <div className="mx-auto w-full max-w-[780px] px-3 py-4 md:px-8 md:py-7">
             {messages.length === 0 ? (
               isGroup ? (
@@ -246,8 +289,20 @@ export function ChatView() {
               )
             ) : (
               <div className="space-y-5">
+                {hasOlder && (
+                  <div className="flex justify-center">
+                    <button onClick={loadEarlier} disabled={loadingOlder} className="rounded-full border border-line px-3 py-1 font-mono text-[12px] text-muted hover:text-fg disabled:opacity-60">
+                      {loadingOlder ? "Loading…" : "Load earlier messages"}
+                    </button>
+                  </div>
+                )}
                 {messages.map((m) => (
-                  <div key={m.id} id={`msg-${m.id}`} className={`rounded-[12px] transition-shadow duration-500 ${flashId === m.id ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""}`}>
+                  // content-visibility: messages scrolled out of view skip layout and paint, so typing stays fast in long chats.
+                  <div
+                    key={m.id}
+                    id={`msg-${m.id}`}
+                    className={`rounded-[12px] transition-shadow duration-500 [contain-intrinsic-size:auto_120px] [content-visibility:auto] ${flashId === m.id ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""}`}
+                  >
                     <MessageBubble message={m} bot={bot} />
                   </div>
                 ))}

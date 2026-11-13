@@ -66,6 +66,9 @@ conversationsRoutes.delete("/:id", (c) => {
 conversationsRoutes.get("/:id/messages", (c) => {
   const store = c.get("store");
   if (!store.conversations.get(c.req.param("id"))) return c.json({ error: "Not found" }, 404);
+  // ?limit=N&before=<messageId> pages backwards; with no limit, the newest 500 (older clients).
+  const limit = Number(c.req.query("limit"));
+  if (limit > 0) return c.json(store.messages.page(c.req.param("id"), Math.min(limit, 500), c.req.query("before") || undefined));
   return c.json(store.messages.list(c.req.param("id")));
 });
 

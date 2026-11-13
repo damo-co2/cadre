@@ -26,6 +26,9 @@ import type {
 } from "@grokbot/shared";
 import { DEFAULT_SETTINGS, ROUTINE_RUN_HISTORY } from "@grokbot/shared";
 import { api, type CreateSquadInput } from "./api";
+
+/** How many messages a chat loads at a time. Long chats load older pages as you scroll up. */
+const MESSAGE_PAGE = 50;
 import type { CreateFromTemplateInput } from "@grokbot/shared";
 
 export interface AppNotification {
@@ -111,6 +114,11 @@ interface State {
   pins: Pin[];
   /** A message to scroll to and highlight once its chat is open (set by opening a pin). */
   focusMessageId: string | null;
+  /** More messages exist above the loaded ones (the chat loads the newest MESSAGE_PAGE, older ones on scroll). */
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  /** Load the page of messages before the oldest loaded one; resolves false when there was nothing more. */
+  loadOlder(): Promise<boolean>;
   /** The message the composer is replying to (cleared on send or when the chat changes). */
   replyTo: { messageId: string; author: string; text: string } | null;
   setReplyTo(to: { messageId: string; author: string; text: string } | null): void;
@@ -218,6 +226,25 @@ export const useStore = create<State>((set, get) => ({
   prRev: 0,
   pins: [],
   focusMessageId: null,
+  hasOlder: false,
+  loadingOlder: false,
+  async loadOlder() {
+    const { conversation, messages, hasOlder, loadingOlder } = get();
+    if (!conversation || !hasOlder || loadingOlder || !messages.length) return false;
+    set({ loadingOlder: true });
+    try {
+      const page = await api.conversations.messages(conversation.id, { limit: MESSAGE_PAGE, before: messages[0]!.id });
+      if (get().conversation?.id !== conversation.id) return false;
+      const have = new Set(get().messages.map((m) => m.id));
+      const older = page.filter((m) => !have.has(m.id));
+      set({ messages: [...older, ...get().messages], hasOlder: page.length === MESSAGE_PAGE });
+      return older.length > 0;
+    } catch {
+      return false;
+    } finally {
+      set({ loadingOlder: false });
+    }
+  },
   replyTo: null,
   setReplyTo(to) {
     set({ replyTo: to });
@@ -426,8 +453,8 @@ export const useStore = create<State>((set, get) => ({
     const conversation = await api.bots.conversation(id);
     if (get().selectedBotId !== id) return;
     set({ selectedConversationId: conversation.id, conversation });
-    const messages = await api.conversations.messages(conversation.id);
-    if (get().selectedBotId === id) set({ messages });
+    const messages = await api.conversations.messages(conversation.id, { limit: MESSAGE_PAGE });
+    if (get().selectedBotId === id) set({ messages, hasOlder: messages.length === MESSAGE_PAGE });
   },
 
   async selectConversation(id) {
@@ -448,8 +475,8 @@ export const useStore = create<State>((set, get) => ({
       mobileSidebarOpen: false,
       mobileComputerOpen: false,
     });
-    const messages = await api.conversations.messages(id);
-    if (get().selectedConversationId === id) set({ messages });
+    const messages = await api.conversations.messages(id, { limit: MESSAGE_PAGE });
+    if (get().selectedConversationId === id) set({ messages, hasOlder: messages.length === MESSAGE_PAGE });
   },
 
   async createGroup(botIds, title) {
@@ -584,7 +611,7 @@ export const useStore = create<State>((set, get) => ({
     const conv = get().conversation;
     if (!conv) return;
     await api.conversations.reset(conv.id);
-    set({ messages: [] });
+    set({ messages: [], hasOlder: false });
   },
 
   async updateSettings(patch) {
