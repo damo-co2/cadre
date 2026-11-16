@@ -38,6 +38,9 @@ export function ChatView() {
   const replyTo = useStore((s) => s.replyTo);
   const setReplyTo = useStore((s) => s.setReplyTo);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Screen view: in a group, whose screen is open (picked from the Team panel), and whether it fills the window.
+  const [screenBotId, setScreenBotId] = useState<string | null>(null);
+  const [screenExpanded, setScreenExpanded] = useState(false);
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const mobileComputerOpen = useStore((s) => s.mobileComputerOpen);
   const setMobileComputerOpen = useStore((s) => s.setMobileComputerOpen);
@@ -51,7 +54,15 @@ export function ChatView() {
   const setAutoMode = useStore((s) => s.setAutoMode);
   const showComputer = isMobile ? mobileComputerOpen : rightPanel === "computer";
   const toggleComputer = () => (isMobile ? setMobileComputerOpen(!mobileComputerOpen) : setRightPanel(rightPanel === "computer" ? "team" : "computer"));
-  const closeComputer = () => (isMobile ? setMobileComputerOpen(false) : setRightPanel("team"));
+  // The big view ends whenever the screen panel closes, however it was closed.
+  useEffect(() => {
+    if (!showComputer) setScreenExpanded(false);
+  }, [showComputer]);
+  const closeComputer = () => {
+    setScreenExpanded(false);
+    if (isMobile) setMobileComputerOpen(false);
+    else setRightPanel("team");
+  };
   const scroller = useRef<HTMLDivElement>(null);
   const streaming = useMemo(() => messages.some((m) => m.status === "streaming"), [messages]);
 
@@ -83,6 +94,22 @@ export function ChatView() {
 
   // Follow the conversation: jump to the bottom when a conversation loads or the user sends,
   // and keep following while streaming unless the user has scrolled up to read.
+  // `stick` stays true while the view is at the bottom. Messages out of view are laid out at a guessed
+  // height (content-visibility), so after the jump they render at their real height and the page grows
+  // under the reader: while stuck, every change in the page's height scrolls back to the bottom.
+  const stick = useRef(true);
+  const content = useRef<HTMLDivElement>(null);
+  const conversationKey = conversation?.id;
+  useEffect(() => {
+    const inner = content.current;
+    const el = scroller.current;
+    if (!inner || !el) return;
+    const ro = new ResizeObserver(() => {
+      if (stick.current && keepFromBottom.current === null) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [conversationKey]);
   const lastConversation = useRef<string | null>(null);
   const lastMessageId = useRef<string | null>(null);
   useEffect(() => {
@@ -101,7 +128,10 @@ export function ChatView() {
     }
     keepFromBottom.current = null;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    if (switched || (appended && last?.role === "user") || nearBottom) el.scrollTop = el.scrollHeight;
+    if (switched || (appended && last?.role === "user") || nearBottom) {
+      stick.current = true;
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages]);
 
   // Opening a pin or a reply's quote: load older pages until the message is there, then scroll to it
@@ -127,6 +157,7 @@ export function ChatView() {
       return;
     }
     useStore.setState({ focusMessageId: null });
+    stick.current = false; // reading an older message: don't snap back to the bottom
     el.scrollIntoView({ block: "center" });
     setFlashId(target!.id);
     clearTimeout(flashTimer.current);
@@ -154,6 +185,19 @@ export function ChatView() {
   const waitingOnYou = tasks.filter((t) => t.ownerBotId === null).length;
   // The Bot whose screen the Team panel shows: this chat's Bot, or in a group the one working.
   const panelBot = bot ?? members.find((m) => useStore.getState().botStatus[m.id] === "working") ?? members.find((m) => m.isPrimary) ?? members[0] ?? null;
+  // The Bot whose full screen is open: this chat's Bot, or in a group the one picked from the Team panel.
+  const screenBot = bot ?? members.find((m) => m.id === screenBotId) ?? null;
+  const openScreen = (expand: boolean) =>
+    panelBot
+      ? () => {
+          setScreenBotId(panelBot.id);
+          setScreenExpanded(expand);
+          if (isMobile) {
+            setMobileTeamOpen(false);
+            setMobileComputerOpen(true);
+          } else setRightPanel("computer");
+        }
+      : undefined;
 
   if (!conversation || (!isGroup && !bot)) return null;
 
@@ -224,11 +268,11 @@ export function ChatView() {
             <span className="hidden sm:inline">Auto</span>
           </button>
           <NotificationsMenu />
-          {!isGroup && (
+          {(!isGroup || members.length > 0) && (
             <button
-              onClick={toggleComputer}
+              onClick={isGroup ? (showComputer ? closeComputer : openScreen(false)) : toggleComputer}
               className={`no-drag flex shrink-0 items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-[13.5px] ${showComputer ? "bg-elev text-accent" : "text-muted hover:bg-elev"}`}
-              title="Open computer"
+              title={isGroup ? "See a Bot's screen in this group" : "Open computer"}
             >
               <Monitor size={14} />
               <span className="hidden sm:inline">Computer</span>
@@ -254,11 +298,14 @@ export function ChatView() {
         <div
           ref={scroller}
           onScroll={(e) => {
-            if (hasOlder && e.currentTarget.scrollTop < 400) loadEarlier();
+            const el = e.currentTarget;
+            // Scrolled up to read: stop following. Back at the bottom: follow again.
+            stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            if (hasOlder && el.scrollTop < 400) loadEarlier();
           }}
           className="no-drag flex-1 overflow-y-auto"
         >
-          <div className="mx-auto w-full max-w-[780px] px-3 py-4 md:px-8 md:py-7">
+          <div ref={content} className="mx-auto w-full max-w-[780px] px-3 py-4 md:px-8 md:py-7">
             {messages.length === 0 ? (
               isGroup ? (
                 <div className="mt-10 text-center">
@@ -359,17 +406,24 @@ export function ChatView() {
         />
       </div>
       {showComputer &&
-        bot &&
+        screenBot &&
         (isMobile ? (
           // Phone: the computer takes the whole screen; its header's X closes it.
           <div className="fixed inset-0 z-30 bg-bg">
-            <ComputerPanel bot={bot} onClose={closeComputer} />
+            <ComputerPanel bot={screenBot} onClose={closeComputer} members={isGroup ? members : undefined} onPickBot={setScreenBotId} />
           </div>
         ) : (
-          <ComputerPanel bot={bot} onClose={closeComputer} />
+          <ComputerPanel
+            bot={screenBot}
+            onClose={closeComputer}
+            expanded={screenExpanded}
+            onToggleExpand={() => setScreenExpanded((v) => !v)}
+            members={isGroup ? members : undefined}
+            onPickBot={setScreenBotId}
+          />
         ))}
-      {!isMobile && (rightPanel === "team" || (rightPanel === "computer" && !bot)) && (
-        <TeamPanel bot={panelBot} onClose={() => setRightPanel(null)} onOpenComputer={bot ? () => setRightPanel("computer") : undefined} />
+      {!isMobile && (rightPanel === "team" || (rightPanel === "computer" && !screenBot)) && (
+        <TeamPanel bot={panelBot} onClose={() => setRightPanel(null)} onOpenComputer={openScreen(true)} />
       )}
       {isMobile && mobileTeamOpen && (
         <div className="fixed inset-0 z-30 bg-sunken">
@@ -377,14 +431,7 @@ export function ChatView() {
             fullScreen
             bot={panelBot}
             onClose={() => setMobileTeamOpen(false)}
-            onOpenComputer={
-              bot
-                ? () => {
-                    setMobileTeamOpen(false);
-                    setMobileComputerOpen(true);
-                  }
-                : undefined
-            }
+            onOpenComputer={openScreen(false)}
           />
         </div>
       )}

@@ -75,6 +75,8 @@ export interface Bot {
   avatarColor: string;
   avatarImage: string | null; // data URL or file path
   modelRef: string | null; // null = use default model from settings
+  /** Switched to when the main model runs out of credit or hits its usage limit; null = no backup. */
+  backupModelRef: string | null;
   isPrimary: boolean;
   pinned: boolean;
   hidden: boolean;
@@ -129,6 +131,7 @@ export const updateBotSchema = z.object({
   avatarColor: z.string().optional(),
   avatarImage: z.string().nullable().optional(),
   modelRef: z.string().nullable().optional(),
+  backupModelRef: z.string().nullable().optional(),
   isPrimary: z.boolean().optional(),
   pinned: z.boolean().optional(),
   hidden: z.boolean().optional(),
@@ -532,6 +535,8 @@ export interface Task {
   priority: TaskPriority;
   dueAt: string | null;
   result: string | null;
+  /** The group chat the task was handed out in: its updates go back there. Null = the Bots' own chats. */
+  conversationId: string | null;
   createdAt: string;
   updatedAt: string;
 }

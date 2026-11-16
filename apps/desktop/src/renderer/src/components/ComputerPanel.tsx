@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Globe, Hand, Loader2, Monitor, RotateCcw, GraduationCap, Square, X } from "lucide-react";
+import { Globe, Hand, Loader2, Maximize2, Minimize2, Monitor, RotateCcw, GraduationCap, Square, X } from "lucide-react";
 import type { Bot, ScreenInput, ScreenState, ScreenStatus } from "@grokbot/shared";
 import { SCREEN_SIZE, TEACH_MAX_MS } from "@grokbot/shared";
 import { api } from "../lib/api";
@@ -22,10 +22,27 @@ const STATUS_CLASS: Record<ScreenStatus, string> = {
 };
 
 const MOVE_INTERVAL_MS = 33; // ~30 mouse moves per second
+const PASTE_MAX_CHARS = 20_000;
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "OS", "CapsLock", "NumLock", "ScrollLock", "Fn", "Dead", "Unidentified"]);
 
 /** Right-hand computer view: live screencast of the Bot's screen, with "Take control" for logins, 2FA and CAPTCHAs. */
-export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose: () => void }) {
+export function ComputerPanel({
+  bot,
+  onClose,
+  expanded = false,
+  onToggleExpand,
+  members,
+  onPickBot,
+}: {
+  bot: Bot;
+  onClose: () => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+  /** In a group chat: the members whose screens you can switch between. */
+  members?: Bot[];
+  onPickBot?: (botId: string) => void;
+}) {
+  const botStatus = useStore((s) => s.botStatus);
   const state = useStore((s) => s.screens[bot.id] as ScreenState | undefined);
   const wsSend = useStore((s) => s.wsSend);
   const connected = useStore((s) => s.connected);
@@ -57,6 +74,16 @@ export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose: () => void 
     const t = setTimeout(() => setTeachSaved(false), 4000);
     return () => clearTimeout(t);
   }, [teachSaved]);
+
+  // Esc leaves the big view, except while you control the screen (Esc then goes to the page).
+  useEffect(() => {
+    if (!expanded || controlled || !onToggleExpand) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onToggleExpand();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded, controlled, onToggleExpand]);
 
   const upsertState = (st: ScreenState) => useStore.setState((s) => ({ screens: { ...s.screens, [bot.id]: st } }));
 
@@ -199,11 +226,25 @@ export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose: () => void 
     });
   };
 
+  // ⌘V / Ctrl+V: the Bot's browser has its own empty clipboard, so type this Mac's clipboard text into the page.
+  const paste = async () => {
+    try {
+      const text = (await (window.cadre?.readText?.() ?? navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+      if (text) sendInput({ kind: "text", text: text.slice(0, PASTE_MAX_CHARS) });
+    } catch (err) {
+      useStore.setState({ error: `Couldn't read the clipboard: ${(err as Error).message}` });
+    }
+  };
+
   const key = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (!controlled) return;
     if (MODIFIER_KEYS.has(e.key)) return;
     e.preventDefault();
     e.stopPropagation();
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "v") {
+      void paste();
+      return;
+    }
     const modifiers = modifiersOf(e);
     const printable = e.key.length === 1;
     if (printable && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -214,20 +255,42 @@ export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose: () => void 
   };
 
   return (
-    <aside className="flex h-full w-full shrink-0 flex-col border-l border-line bg-sunken/40 md:w-[420px]">
-      <div className="drag flex h-[52px] items-center justify-between gap-2 border-b border-line px-3">
+    <aside className={expanded ? "fixed inset-0 z-40 flex flex-col bg-bg" : "flex h-full w-full shrink-0 flex-col border-l border-line bg-sunken/40 md:w-[420px]"}>
+      <div className={`drag flex h-[52px] items-center justify-between gap-2 border-b border-line px-3 ${expanded && window.cadre?.platform === "darwin" ? "pl-[84px]" : ""}`}>
         <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-[14px] font-medium">{bot.name}'s screen</div>
+          {members && members.length > 1 && onPickBot ? (
+            <select
+              value={bot.id}
+              onChange={(e) => onPickBot(e.target.value)}
+              className="no-drag min-w-0 truncate rounded-md border border-line bg-elev px-1.5 py-0.5 text-[14px] font-medium outline-none"
+              title="Whose screen to show"
+            >
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}'s screen{botStatus[m.id] === "working" ? " · working" : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="truncate text-[14px] font-medium">{bot.name}'s screen</div>
+          )}
           <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[12px] font-medium ${STATUS_CLASS[status]}`} title={state?.error}>
             {STATUS_LABEL[status]}
           </span>
         </div>
-        <button onClick={onClose} className="no-drag rounded-md p-1 text-muted hover:bg-elev hover:text-fg" title="Close">
-          <X size={15} />
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {onToggleExpand && (
+            <button onClick={onToggleExpand} className="no-drag rounded-md p-1 text-muted hover:bg-elev hover:text-fg" title={expanded ? "Make smaller (Esc)" : "Make bigger"}>
+              {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+          )}
+          <button onClick={onClose} className="no-drag rounded-md p-1 text-muted hover:bg-elev hover:text-fg" title="Close">
+            <X size={15} />
+          </button>
+        </div>
       </div>
 
-      <div className="no-drag flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
+      <div className={`no-drag flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3 ${expanded ? "items-center [&>*]:w-full [&>*]:max-w-[1600px]" : ""}`}>
         <div className="flex items-center gap-1.5 rounded-app border border-line bg-elev px-2 py-1">
           <Globe size={12} className="shrink-0 text-muted" />
           <input
@@ -247,7 +310,14 @@ export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose: () => void 
           />
         </div>
 
-        <div className="relative w-full overflow-hidden rounded-lg border border-line bg-black" style={{ aspectRatio: `${SCREEN_SIZE.width} / ${SCREEN_SIZE.height}` }}>
+        <div
+          className="relative w-full shrink-0 overflow-hidden rounded-lg border border-line bg-black"
+          style={{
+            aspectRatio: `${SCREEN_SIZE.width} / ${SCREEN_SIZE.height}`,
+            // Big view: as wide as fits while the controls below stay on screen.
+            ...(expanded ? { width: `min(100%, calc((100vh - 250px) * ${SCREEN_SIZE.width / SCREEN_SIZE.height}))` } : {}),
+          }}
+        >
           <canvas
             ref={canvasRef}
             width={SCREEN_SIZE.width}
@@ -311,7 +381,7 @@ export function ComputerPanel({ bot, onClose }: { bot: Bot; onClose: () => void 
           </div>
         ) : controlled ? (
           <div className="rounded-app border border-accent/40 bg-accent/10 px-2.5 py-1.5 text-xs">
-            You're in control. Finish the step, then press <b>I'm done</b> and tell the Bot to continue.
+            You're in control. ⌘V pastes your clipboard into the page. Finish the step, then press <b>I'm done</b> and tell the Bot to continue.
           </div>
         ) : null}
 

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("cadre", {
   getZoom: (): Promise<number> => ipcRenderer.invoke("cadre:getZoom"),
   setZoom: (factor: number) => ipcRenderer.send("cadre:setZoom", factor),
   copyText: (text: string) => ipcRenderer.send("cadre:copy", text),
+  readText: (): Promise<string> => ipcRenderer.invoke("cadre:readText"),
   pickFolder: (title?: string): Promise<string | null> => ipcRenderer.invoke("cadre:pickFolder", title),
 });
 

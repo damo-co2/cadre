@@ -198,6 +198,8 @@ ipcMain.handle("cadre:getZoom", (e) => {
 });
 ipcMain.on("cadre:setZoom", (e, factor: number) => setZoom(BrowserWindow.fromWebContents(e.sender), Number(factor) || 1));
 ipcMain.on("cadre:copy", (_e, text: string) => clipboard.writeText(String(text ?? "")));
+// Pasting into a Bot's browser: its headless Chromium has its own empty clipboard, so the page asks for this one.
+ipcMain.handle("cadre:readText", () => clipboard.readText());
 ipcMain.handle("cadre:isFocused", () => BrowserWindow.getAllWindows().some((w) => w.isFocused()));
 ipcMain.handle("cadre:pickFolder", async (e, title?: string) => {
   const win = BrowserWindow.fromWebContents(e.sender);

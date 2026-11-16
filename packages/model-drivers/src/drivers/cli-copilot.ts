@@ -32,7 +32,20 @@ export class CopilotCliDriver implements ModelDriver {
   }
 
   async listModels() {
-    const labels: Record<string, string> = { auto: "Auto (Copilot picks)" };
+    const labels: Record<string, string> = {
+      auto: "Auto (Copilot picks)",
+      "claude-sonnet-5.5": "Claude Sonnet 5.5",
+      "gpt-6.1-sol": "GPT-6.1 Sol",
+      "gpt-6-astra": "GPT-6 Astra",
+      "gpt-6-luna": "GPT-6 Luna",
+      "claude-opus-5.5": "Claude Opus 5.5",
+      "gemini-4-carbon": "Gemini 4 Carbon",
+      "gpt-6.1-terra": "GPT-6.1 Terra",
+      "gemini-4-hydrogen": "Gemini 4 Hydrogen",
+      "claude-sonnet-5": "Claude Sonnet 5",
+      "claude-opus-5": "Claude Opus 5",
+      "claude-haiku-5.5": "Claude Haiku 5.5",
+    };
     return PROVIDERS.copilot.curatedModels.map((id) => ({ id, label: labels[id] ?? id }));
   }
 

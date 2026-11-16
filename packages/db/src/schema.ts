@@ -8,6 +8,8 @@ export const bots = sqliteTable("bots", {
   avatarColor: text("avatar_color").notNull().default("#7c5cff"),
   avatarImage: text("avatar_image"),
   modelRef: text("model_ref"),
+  /** Used when the main model runs out of credit or hits its usage limit. */
+  backupModelRef: text("backup_model_ref"),
   isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
   pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
   hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
@@ -263,6 +265,8 @@ export const MIGRATIONS_SQL: string[] = [
   "ALTER TABLE memories ADD COLUMN category TEXT",
   "ALTER TABLE memories ADD COLUMN space_id TEXT",
   "ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'learned'",
+  "ALTER TABLE tasks ADD COLUMN conversation_id TEXT",
+  "ALTER TABLE bots ADD COLUMN backup_model_ref TEXT",
 ];
 
 /** The team task board: work the user or the Chief of Staff hands to Bots, tracked to done. */
@@ -276,6 +280,7 @@ export const tasks = sqliteTable("tasks", {
   priority: text("priority").notNull().default("normal"),
   dueAt: text("due_at"),
   result: text("result"),
+  conversationId: text("conversation_id"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
@@ -304,6 +309,7 @@ CREATE TABLE IF NOT EXISTS bots (
   avatar_color TEXT NOT NULL DEFAULT '#7c5cff',
   avatar_image TEXT,
   model_ref TEXT,
+  backup_model_ref TEXT,
   is_primary INTEGER NOT NULL DEFAULT 0,
   pinned INTEGER NOT NULL DEFAULT 0,
   hidden INTEGER NOT NULL DEFAULT 0,
@@ -512,6 +518,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority TEXT NOT NULL DEFAULT 'normal',
   due_at TEXT,
   result TEXT,
+  conversation_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

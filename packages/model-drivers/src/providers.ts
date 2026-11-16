@@ -105,8 +105,22 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     blurb: "Uses your GitHub Copilot plan through the Copilot CLI. Experimental.",
     bin: "copilot",
     defaultModel: "auto",
-    // Model names from GitHub's Copilot CLI docs; "auto" lets Copilot choose. Run /model in `copilot` for your plan's list.
-    curatedModels: ["auto", "claude-haiku-4.5", "gpt-5.3-codex", "gpt-6-astra"],
+    // The Copilot CLI's /model list (Nov 2026), in its order; "auto" lets Copilot choose. The CLI has no command
+    // that prints the list, so a model added later is picked with "Other model id…".
+    curatedModels: [
+      "auto",
+      "claude-sonnet-5.5",
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "claude-opus-5.5",
+      "gemini-4-carbon",
+      "gpt-6.1-terra",
+      "gemini-4-hydrogen",
+      "claude-sonnet-5",
+      "claude-opus-5",
+      "claude-haiku-5.5",
+    ],
   },
   opencode: {
     id: "opencode",

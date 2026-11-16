@@ -1005,6 +1005,7 @@ function rowToBot(r: typeof schema.bots.$inferSelect): Bot {
     avatarColor: r.avatarColor,
     avatarImage: r.avatarImage,
     modelRef: r.modelRef,
+    backupModelRef: r.backupModelRef ?? null,
     isPrimary: r.isPrimary,
     pinned: r.pinned,
     hidden: r.hidden,
@@ -1387,9 +1388,10 @@ export class MessageRepo {
 
   update(
     id: string,
-    patch: Partial<Pick<Message, "content" | "parts" | "attachments" | "status" | "error">>,
+    patch: Partial<Pick<Message, "content" | "parts" | "attachments" | "status" | "error" | "modelRef">>,
   ): Message | undefined {
     const set: Partial<typeof schema.messages.$inferInsert> = { updatedAt: nowIso() };
+    if (patch.modelRef !== undefined) set.modelRef = patch.modelRef;
     if (patch.content !== undefined) set.content = patch.content;
     if (patch.parts !== undefined) set.parts = JSON.stringify(patch.parts);
     if (patch.attachments !== undefined) set.attachments = JSON.stringify(patch.attachments);
@@ -1564,6 +1566,7 @@ function rowToTask(r: typeof schema.tasks.$inferSelect): Task {
     priority: r.priority as TaskPriority,
     dueAt: r.dueAt,
     result: r.result,
+    conversationId: r.conversationId ?? null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -1592,7 +1595,7 @@ export class TaskRepo {
     return this.get(idOrPrefix) ?? this.list().find((t) => t.id.startsWith(idOrPrefix));
   }
 
-  create(input: { title: string; detail?: string; ownerBotId?: string | null; createdBy?: string | null; priority?: TaskPriority; dueAt?: string | null }): Task {
+  create(input: { title: string; detail?: string; ownerBotId?: string | null; createdBy?: string | null; priority?: TaskPriority; dueAt?: string | null; conversationId?: string | null }): Task {
     const ts = nowIso();
     const id = newId();
     this.db
@@ -1607,6 +1610,7 @@ export class TaskRepo {
         priority: input.priority ?? "normal",
         dueAt: input.dueAt ?? null,
         result: null,
+        conversationId: input.conversationId ?? null,
         createdAt: ts,
         updatedAt: ts,
       })

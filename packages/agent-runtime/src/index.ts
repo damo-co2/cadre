@@ -15,6 +15,7 @@ import { PluginManager } from "./plugins.js";
 import { setExtraTemplates } from "./templates.js";
 import { MemoryRewriter, ProfileTools, memoryPromptSection } from "./memory.js";
 import { HistoryCompactor } from "./context.js";
+import { OUT_OF_CREDIT_COOLDOWN_MS, isOutOfCredit } from "./fallback.js";
 import { VaultTools } from "./vault.js";
 import { TeamTools } from "./team.js";
 
@@ -23,6 +24,7 @@ export { AutomationTools, RoutineScheduler, validateCron, type RuntimeToolSpec }
 export { CONNECTOR_TEMPLATES, ConnectorManager, OAUTH_APPS } from "./connectors.js";
 export { MemoryRewriter, ProfileTools, applyProfileChanges, memoryPromptSection, profilePromptSection } from "./memory.js";
 export { VaultTools } from "./vault.js";
+export { OUT_OF_CREDIT_COOLDOWN_MS, isOutOfCredit } from "./fallback.js";
 export { HistoryCompactor, HISTORY_BUDGET_CHARS, KEEP_RECENT_CHARS, COMPACT_KEEP_MESSAGES, split } from "./context.js";
 export { TeamTools } from "./team.js";
 export { BOT_TEMPLATES, SQUAD_TEMPLATES, TEMPLATE_CATALOG, allTemplates, findSquad, findTemplate, instantiateTemplate, introductionMessage, templateCatalog, uniqueBotName } from "./templates.js";
@@ -136,12 +138,16 @@ export class AgentRuntime {
   readonly plugins: PluginManager;
   readonly team: TeamTools;
   private active = new Map<string, ActiveTurn>(); // botId → turn
+  /** `${botId}\u0000${modelRef}` → until when that main model is treated as out of credit. */
+  private outOfCredit = new Map<string, number>();
   /** Bot-initiated wakes since the last user message, per conversation (loop guard). */
   private chain = new Map<string, number>();
   /** Group chats where the Chief has been asked to wrap up: no more Bot handoffs until the user speaks. */
   private wrappingUp = new Map<string, string>(); // conversationId → the Chief wrapping up
   /** Group discussions started with @everyone: turns keep passing between Bots until done. */
   private discussions = new Map<string, { quiet: number }>();
+  /** Group chats: the Chief's review rounds since the user last spoke, and the last message it was asked to review. */
+  private reviews = new Map<string, { rounds: number; through: string }>();
   /** Turns queued or running per conversation (so a discussion waits for everyone's opening reply). */
   private pendingTurns = new Map<string, number>();
   /** shell_run calls Auto Review allowed only on condition they run confined to the sandbox. */
@@ -173,8 +179,8 @@ export class AgentRuntime {
       store: opts.store,
       emit: opts.emit,
       scheduler: this.scheduler,
-      sendToBot: (from, to, message) => this.handoff(from, { bot: to, message }),
-      wakeWith: (botId, content, fromBotId) => this.postSystemAndWake(botId, content, fromBotId),
+      sendToBot: (from, to, message, groupId) => this.handoff(from, { bot: to, message }, groupId),
+      wakeWith: (botId, content, fromBotId, groupId) => ({ conversationId: this.postSystemAndWake(botId, content, fromBotId, groupId).conversationId }),
       isBusy: (conversationId) => this.queue.isBusy(conversationId),
       conversationFor: (botId) => this.conversationFor(botId),
     });
@@ -189,8 +195,23 @@ export class AgentRuntime {
     return this.opts.store.conversations.directForBot(botId).id;
   }
 
-  /** Post a system message into a Bot's own conversation (from itself or another Bot) and wake it. */
-  postSystemAndWake(botId: string, content: string, fromBotId?: string): Message {
+  /**
+   * Post a system message (from the Bot itself or another Bot) and wake the Bot. With `groupId` it goes in that
+   * group chat, adding the Bot when it has room; otherwise (or when it can't join) in the Bot's own chat.
+   */
+  postSystemAndWake(botId: string, content: string, fromBotId?: string, groupId?: string): Message {
+    const { store } = this.opts;
+    const group = groupId ? store.conversations.get(groupId) : undefined;
+    const from = fromBotId ? store.bots.get(fromBotId) : undefined;
+    if (group?.kind === "group" && from) {
+      const member = group.botIds.includes(botId) || !this.changeGroupMembers(group.id, [botId], [], from.name).error;
+      if (member) {
+        const msg = store.messages.create({ conversationId: group.id, role: "system", botId: from.id, content });
+        this.opts.emit({ type: "message.created", message: msg });
+        this.passOn(store.conversations.get(group.id)!, from, [botId], msg.id);
+        return msg;
+      }
+    }
     const conv = this.opts.store.conversations.directForBot(botId);
     const msg = this.opts.store.messages.create({ conversationId: conv.id, role: "system", botId: fromBotId ?? botId, content });
     this.opts.emit({ type: "message.created", message: msg });
@@ -233,6 +254,7 @@ export class AgentRuntime {
    */
   routeUserMessage(conversation: Conversation, message: Message): void {
     this.chain.set(conversation.id, 0);
+    this.reviews.delete(conversation.id);
     this.wrappingUp.delete(conversation.id);
     this.discussions.delete(conversation.id);
     this.checks.delete(conversation.id);
@@ -264,8 +286,12 @@ export class AgentRuntime {
     const picked = others.filter((b) => mentioned.includes(b.name));
     if (picked.length) return picked.map((b) => b.id);
     if (fromBotId) return []; // a Bot that mentions nobody hands off to nobody
-    const primary = members.find((b) => b.isPrimary);
-    return [primary?.id ?? members[0]?.id].filter((x): x is string => !!x);
+    // The user with no @mention: the Chief (so the chat stays responsive) plus every Bot working here right
+    // now, which picks the message up when its current reply ends. The Chief is told who is still working,
+    // so it answers only what is for it instead of relaying the message to them.
+    const primary = members.find((b) => b.isPrimary) ?? members[0];
+    const working = members.filter((b) => b.id !== primary?.id && this.queue.isBusy(conversation.id, b.id));
+    return [primary?.id, ...working.map((b) => b.id)].filter((x): x is string => !!x);
   }
 
   /** Fire-and-forget: the caller gets the HTTP response immediately; results stream over WS. */
@@ -357,7 +383,7 @@ export class AgentRuntime {
         ? [
             `## Your teammates${spaceName ? ` (${spaceName} space)` : ""}`,
             ...others.map((b) => `- ${b.name}${b.isPrimary ? " (Chief of Staff)" : b.label ? ` (${b.label})` : ""}`),
-            "Talk to a teammate with bot_message: say exactly what you need back. It works in its own conversation and its answer comes back to you automatically as \"Reply from <name>\", and you then carry on. Text only; share files through the sandbox folder.",
+            "Talk to a teammate with bot_message: say exactly what you need back. In a group chat the message is posted in the group (a teammate not in it yet is added) and it answers there; otherwise it works in its own chat and its answer comes back to you automatically as \"Reply from <name>\". You then carry on. Text only; share files through the sandbox folder.",
             "Ask a teammate when part of your work fits their role better, or when they already know something you need. Don't hand them your whole job, don't bounce questions back and forth, and keep the user's goal in front.",
             "When a teammate asks you something, just answer in your reply: it goes straight back to them. Don't answer with bot_message.",
             "Bots in other spaces are out of reach on purpose: work only with the teammates above.",
@@ -368,8 +394,17 @@ export class AgentRuntime {
             `This is a group chat with ${group.map((b) => b.name).join(", ")}. Messages from other Bots appear as "[Name]: …". Address a Bot with @Name to hand off; @everyone wakes all. Only reply when you add something: to stay quiet, reply with exactly [no reply].`,
             "When the user writes @everyone, it is a team discussion: you talk it through with each other before going back to the user. Respond to what the others actually said: build on it, add something new, or disagree, and keep it short and conversational. Never repeat a point someone already made. Speak to your teammates, not the user: don't ask the user questions mid-discussion. To put a question to one teammate, @mention them; otherwise the next teammate is picked for you. Only if the team truly can't go further without the user's input, end your message with exactly [over to you].",
             "Everything for the work in this group stays here: talk to members with @Name, and your approvals, secure forms and task updates show up in this group.",
+            "Every member reads every message here, the user's included. Never repeat or pass on what the user said to a teammate (they already have it); @mention a teammate only to add something new or to ask them for something.",
             ...(bot.isPrimary
-              ? ["If the work needs a teammate who isn't in this group, bring them in with group_invite, then @mention them."]
+              ? [
+                  "A user message with no @mention comes to you and also reaches every teammate still working here (Cadre says who), who picks it up when their current reply ends. Answer only what is for you (status, plans, the team, or something no one is working on); if it is information for a working teammate, reply with exactly [no reply].",
+                ]
+              : []),
+            ...(bot.isPrimary
+              ? [
+                  "If the work needs a teammate who isn't in this group, bring them in with group_invite, then @mention them.",
+                  "You own the outcome here. Check every result your teammates post before the user relies on it, send back what is wrong or missing with @mention, and keep going until you can post one final, checked result for the user (@mention nobody in that message). Cadre wakes you to review whenever the group goes quiet.",
+                ]
               : group.some((b) => b.isPrimary)
                 ? [`When you finish your part, post the result here and @mention ${group.find((b) => b.isPrimary)!.name}.`]
                 : []),
@@ -436,7 +471,7 @@ export class AgentRuntime {
       {
         name: "bot_message",
         description:
-          "Ask a teammate in your space for help. The message lands in its own conversation; it wakes and works, and its answer comes back to you automatically as \"Reply from <name>\". Asynchronous and text-only. To answer a teammate who asked you, just reply normally instead.",
+          "Ask a teammate in your space for help. When you are working in a group chat it is posted in that group (a teammate not in it yet is added) and the teammate answers there, so the user sees everything in one place. Otherwise it lands in the teammate's own chat and its answer comes back to you automatically as \"Reply from <name>\". Asynchronous and text-only. To answer a teammate who asked you, just reply normally instead.",
         zodShape: shape,
         inputSchema: z.toJSONSchema(z.object(shape)) as Record<string, unknown>,
       },
@@ -608,8 +643,12 @@ export class AgentRuntime {
     return { content: [{ type: "text", text: `Added ${target.name} to this group. It can see the whole chat; @mention ${target.name} in your reply to bring it in.` }] };
   }
 
-  /** bot_message: post into the target Bot's 1:1 conversation and wake it (loop-guarded). */
-  private async handoff(fromBotId: string, input: unknown): Promise<ToolCallResult> {
+  /**
+   * bot_message: wake a teammate with a message (loop-guarded). Work that belongs to a group chat stays in it:
+   * the group the sender is working in, else `groupId` (e.g. the group a task was handed out in). A teammate
+   * not yet in that group is added. Only outside any group does it go to the teammate's own chat.
+   */
+  private async handoff(fromBotId: string, input: unknown, groupId?: string): Promise<ToolCallResult> {
     const store = this.opts.store;
     const a = (input ?? {}) as { bot?: string; message?: string };
     const fail = (t: string): ToolCallResult => ({ isError: true, content: [{ type: "text", text: t }] });
@@ -632,12 +671,14 @@ export class AgentRuntime {
     }
     const message = String(a.message ?? "").trim();
     if (!message) return fail("Say what you need from them in message.");
-    // Working in a group: keep it in the group. The Chief pulls a missing teammate in.
+    // Group work stays in the group: any member (or the Chief) pulls a missing teammate in.
     const activeId = this.active.get(from.id)?.conversationId;
-    const group = activeId ? store.conversations.get(activeId) : undefined;
+    const working = activeId ? store.conversations.get(activeId) : undefined;
+    const hinted = groupId ? store.conversations.get(groupId) : undefined;
+    const group = working?.kind === "group" ? working : hinted?.kind === "group" ? hinted : undefined;
     if (group?.kind === "group") {
       let member = group.botIds.includes(target.id);
-      if (!member && from.isPrimary) member = !this.changeGroupMembers(group.id, [target.id], [], from.name).error;
+      if (!member && (from.isPrimary || group.botIds.includes(from.id))) member = !this.changeGroupMembers(group.id, [target.id], [], from.name).error;
       if (member) {
         const msg = store.messages.create({
           conversationId: group.id,
@@ -805,17 +846,20 @@ export class AgentRuntime {
     const wrapper = this.wrappingUp.get(ev.conversationId);
     if (ev.source === "bot" && wrapper !== undefined && wrapper !== bot.id) return undefined;
 
-    const modelRef = this.resolveModelRef(bot);
-    const { provider, model } = parseModelRef(modelRef);
-    const driver = drivers.get(provider);
-    const viaMcp = driver.toolMode === "mcp";
+    // Backup model: used when the main one runs out of credit, and straight away while it is still out.
+    const mainRef = this.resolveModelRef(bot);
+    const backupRef = bot.backupModelRef && bot.backupModelRef !== mainRef ? bot.backupModelRef : null;
+    const outKey = `${bot.id}\u0000${mainRef}`;
+    const mainOut = !!backupRef && (this.outOfCredit.get(outKey) ?? 0) > Date.now();
+    let modelRef = mainOut && backupRef ? backupRef : mainRef;
 
     emit({ type: "bot.status", botId: bot.id, status: "working" });
 
     const conversation = store.conversations.get(ev.conversationId);
     const history = store.messages.list(ev.conversationId);
-    // Woken by a message this Bot has already answered (e.g. two handoffs queued for it): nothing new.
-    if (ev.source === "bot" && ev.messageId && !ev.note) {
+    // Woken by a message this Bot has already answered (two handoffs, or two user messages queued while it
+    // worked: its first queued reply saw both): nothing new.
+    if ((ev.source === "bot" || ev.source === "user") && ev.messageId && !ev.note) {
       const trigger = history.findIndex((m) => m.id === ev.messageId);
       let lastOwn = -1;
       history.forEach((m, i) => {
@@ -829,43 +873,47 @@ export class AgentRuntime {
     // System messages (routine triggers, handoffs) are user-side turns. In a group, other Bots'
     // messages are user-side turns labelled "[Name]: …" so the model can tell who said what.
     const nameOf = (id: string | null) => (id ? (store.bots.get(id)?.name ?? "Bot") : "Bot");
-    // With a model session (Claude Code, Codex) the CLI holds the history and compacts it itself. Without one
-    // (API keys, or a CLI starting fresh) Cadre sends it: the chat's summary plus what came after, kept in budget.
-    const sessionId = store.driverSessions.get(ev.conversationId, bot.id, provider);
-    const fitted = sessionId ? { summary: null, messages: history } : await this.context.fit(ev.conversationId, bot, history, signal);
-    const chat: ChatMessage[] = fitted.messages
-      .filter((m) => m.status !== "error" && (m.content.trim() || m.attachments.length))
-      .map((m) => {
-        const content = m.attachments.length ? `${m.content}\n\n${this.describeAttachments(m)}`.trim() : m.content;
-        return m.role === "bot" && m.botId === bot.id
-          ? { role: "assistant" as const, content }
-          : m.role === "bot"
-            ? { role: "user" as const, content: `[${nameOf(m.botId)}]: ${content}` }
-            : { role: "user" as const, content };
-      });
-    if (fitted.summary) {
-      chat.unshift({ role: "user", content: `(Cadre: summary of the earlier part of this chat, which is no longer shown word for word.)\n\n${fitted.summary}` });
-    }
-    // Group Bots work at the same time: say who is still mid-turn, so "is everyone working?" has an answer
-    // and nobody repeats work a teammate hasn't posted yet.
-    if (conversation?.kind === "group") {
-      const busy = conversation.botIds.filter((id) => id !== bot.id && this.queue.isBusy(ev.conversationId, id)).map((id) => nameOf(id));
-      const last = chat.at(-1);
-      if (busy.length && last?.role === "user") {
-        last.content += `\n\n(Cadre: still working on their reply in this group right now: ${busy.join(", ")}.)`;
+    // The history this turn sends, per provider (each provider keeps its own model session).
+    const buildChat = async (provider: string): Promise<{ chat: ChatMessage[]; sessionId: string | undefined }> => {
+      // With a model session (Claude Code, Codex) the CLI holds the history and compacts it itself. Without one
+      // (API keys, or a CLI starting fresh) Cadre sends it: the chat's summary plus what came after, kept in budget.
+      const sessionId = store.driverSessions.get(ev.conversationId, bot.id, provider);
+      const fitted = sessionId ? { summary: null, messages: history } : await this.context.fit(ev.conversationId, bot, history, signal);
+      const chat: ChatMessage[] = fitted.messages
+        .filter((m) => m.status !== "error" && (m.content.trim() || m.attachments.length))
+        .map((m) => {
+          const content = m.attachments.length ? `${m.content}\n\n${this.describeAttachments(m)}`.trim() : m.content;
+          return m.role === "bot" && m.botId === bot.id
+            ? { role: "assistant" as const, content }
+            : m.role === "bot"
+              ? { role: "user" as const, content: `[${nameOf(m.botId)}]: ${content}` }
+              : { role: "user" as const, content };
+        });
+      if (fitted.summary) {
+        chat.unshift({ role: "user", content: `(Cadre: summary of the earlier part of this chat, which is no longer shown word for word.)\n\n${fitted.summary}` });
       }
-    }
-    if (ev.note) chat.push({ role: "user", content: ev.note });
-    // Models reject a turn whose last message is their own: say plainly that nothing new was said.
-    if (chat.at(-1)?.role === "assistant") {
-      chat.push({
-        role: "user",
-        content:
-          conversation?.kind === "group"
-            ? "(Nothing new has been said since your last message. Add something new to the discussion, or reply with exactly [no reply].)"
-            : "(Continue from your last message if there is more to do; otherwise reply with exactly [no reply].)",
-      });
-    }
+      // Group Bots work at the same time: say who is still mid-turn, so "is everyone working?" has an answer
+      // and nobody repeats work a teammate hasn't posted yet.
+      if (conversation?.kind === "group") {
+        const busy = conversation.botIds.filter((id) => id !== bot.id && this.queue.isBusy(ev.conversationId, id)).map((id) => nameOf(id));
+        const last = chat.at(-1);
+        if (busy.length && last?.role === "user") {
+          last.content += `\n\n(Cadre: still working on their reply in this group right now: ${busy.join(", ")}.)`;
+        }
+      }
+      if (ev.note) chat.push({ role: "user", content: ev.note });
+      // Models reject a turn whose last message is their own: say plainly that nothing new was said.
+      if (chat.at(-1)?.role === "assistant") {
+        chat.push({
+          role: "user",
+          content:
+            conversation?.kind === "group"
+              ? "(Nothing new has been said since your last message. Add something new to the discussion, or reply with exactly [no reply].)"
+              : "(Continue from your last message if there is more to do; otherwise reply with exactly [no reply].)",
+        });
+      }
+      return { chat, sessionId };
+    };
     const userMessages = history.filter((m) => m.role === "user").map((m) => m.content);
 
     const reply = store.messages.create({
@@ -904,62 +952,81 @@ export class AgentRuntime {
     };
 
     this.active.set(bot.id, { conversationId: ev.conversationId, messageId: reply.id, signal, pushPart, userMessages });
+    if (mainOut) pushPart({ type: "status", text: `Using the backup model ${backupRef}: ${mainRef} ran out of credit recently.` });
 
     try {
-      for await (const d of driver.run({
-        model,
-        system: this.buildSystemPrompt(bot, conversation),
-        messages: chat,
-        tools: viaMcp ? [] : this.toolDefs(bot),
-        mcpServers: viaMcp ? this.mcpServers(bot.id) : undefined,
-        executeTool: (name, input) => this.callTool(bot.id, name, input),
-        sessionId,
-        cwd: this.opts.workspaceDir,
-        signal,
-      })) {
-        switch (d.type) {
-          case "session":
-            store.driverSessions.set(ev.conversationId, bot.id, provider, d.sessionId);
-            break;
-          case "text-delta":
-            if (d.text) appendText(d.text);
-            break;
-          case "reasoning-delta": {
-            const last = parts.at(-1);
-            if (last?.type === "reasoning") last.text += d.text;
-            else pushPart({ type: "reasoning", text: d.text });
-            break;
-          }
-          case "tool-call":
-            pushPart({ type: "tool-call", id: d.id, name: stripMcpPrefix(d.name), input: d.input, status: "running" });
-            break;
-          case "tool-result": {
-            const call = parts.find((p) => p.type === "tool-call" && p.id === d.id);
-            if (call && call.type === "tool-call") call.status = d.isError ? "error" : "done";
-            pushPart({ type: "tool-result", id: d.id, name: stripMcpPrefix(d.name), output: compactOutput(d.output), isError: d.isError });
-            // Files the Bot wrote become result cards ("created files" in the transcript).
-            if (!d.isError && call?.type === "tool-call" && stripMcpPrefix(d.name) === "fs_write") {
-              const rel = String((call.input as { path?: string })?.path ?? "");
-              const abs = resolve(this.opts.workspaceDir, rel);
-              if (rel && abs.startsWith(resolve(this.opts.workspaceDir) + sep) && existsSync(abs)) {
-                pushPart({ type: "file", path: rel, name: basename(rel), size: statSync(abs).size });
+      for (let attempt = 0; ; attempt++) {
+        const { provider, model } = parseModelRef(modelRef);
+        const driver = drivers.get(provider);
+        const viaMcp = driver.toolMode === "mcp";
+        try {
+          const { chat, sessionId } = await buildChat(provider);
+          for await (const d of driver.run({
+            model,
+            system: this.buildSystemPrompt(bot, conversation),
+            messages: chat,
+            tools: viaMcp ? [] : this.toolDefs(bot),
+            mcpServers: viaMcp ? this.mcpServers(bot.id) : undefined,
+            executeTool: (name, input) => this.callTool(bot.id, name, input),
+            sessionId,
+            cwd: this.opts.workspaceDir,
+            signal,
+          })) {
+            switch (d.type) {
+              case "session":
+                store.driverSessions.set(ev.conversationId, bot.id, provider, d.sessionId);
+                break;
+              case "text-delta":
+                if (d.text) appendText(d.text);
+                break;
+              case "reasoning-delta": {
+                const last = parts.at(-1);
+                if (last?.type === "reasoning") last.text += d.text;
+                else pushPart({ type: "reasoning", text: d.text });
+                break;
               }
+              case "tool-call":
+                pushPart({ type: "tool-call", id: d.id, name: stripMcpPrefix(d.name), input: d.input, status: "running" });
+                break;
+              case "tool-result": {
+                const call = parts.find((p) => p.type === "tool-call" && p.id === d.id);
+                if (call && call.type === "tool-call") call.status = d.isError ? "error" : "done";
+                pushPart({ type: "tool-result", id: d.id, name: stripMcpPrefix(d.name), output: compactOutput(d.output), isError: d.isError });
+                // Files the Bot wrote become result cards ("created files" in the transcript).
+                if (!d.isError && call?.type === "tool-call" && stripMcpPrefix(d.name) === "fs_write") {
+                  const rel = String((call.input as { path?: string })?.path ?? "");
+                  const abs = resolve(this.opts.workspaceDir, rel);
+                  if (rel && abs.startsWith(resolve(this.opts.workspaceDir) + sep) && existsSync(abs)) {
+                    pushPart({ type: "file", path: rel, name: basename(rel), size: statSync(abs).size });
+                  }
+                }
+                break;
+              }
+              case "status":
+                pushPart({ type: "status", text: d.text });
+                break;
+              case "error":
+                errorText = d.message;
+                break;
+              case "done":
+                break;
             }
-            break;
+            if (errorText) break;
           }
-          case "status":
-            pushPart({ type: "status", text: d.text });
-            break;
-          case "error":
-            errorText = d.message;
-            break;
-          case "done":
-            break;
+        } catch (err) {
+          errorText = err instanceof Error ? err.message : String(err);
         }
-        if (errorText) break;
+        // Out of credit before doing anything: run the same reply again on the backup model.
+        const switchToBackup =
+          attempt === 0 && !!errorText && !signal.aborted && !!backupRef && modelRef !== backupRef && isOutOfCredit(errorText) && !text.trim() && !parts.some((p) => p.type === "tool-call");
+        if (!switchToBackup || !backupRef) break;
+        this.outOfCredit.set(outKey, Date.now() + OUT_OF_CREDIT_COOLDOWN_MS);
+        pushPart({ type: "status", text: `${modelRef} is out of credit (${errorText!.replace(/\s+/g, " ").slice(0, 160)}). Switched to the backup model ${backupRef}.` });
+        emit({ type: "notify", botId: bot.id, conversationId: ev.conversationId, title: `${bot.name} switched to its backup model`, body: `${modelRef} is out of credit; now using ${backupRef}.`, kind: "reply" });
+        modelRef = backupRef;
+        store.messages.update(reply.id, { modelRef });
+        errorText = null;
       }
-    } catch (err) {
-      errorText = err instanceof Error ? err.message : String(err);
     } finally {
       if (this.active.get(bot.id)?.messageId === reply.id) this.active.delete(bot.id);
     }
@@ -977,6 +1044,7 @@ export class AgentRuntime {
           release();
           this.continueDiscussion(conversation, bot, { quiet: true, handBack: false, messageId: undefined });
         }
+        this.maybeReview(store.conversations.get(ev.conversationId) ?? conversation);
       }
       return undefined;
     }
@@ -1025,7 +1093,51 @@ export class AgentRuntime {
         this.passOn(groupNow, bot, targets, final.id);
       } else this.continueDiscussion(groupNow, bot, { quiet: false, handBack, messageId: final.id });
     }
+    // A teammate asked the user something ([over to you]): that waits for the user, not for a review.
+    if (groupNow?.kind === "group" && !stopped && !handBack) this.maybeReview(groupNow);
     return final;
+  }
+
+  /**
+   * The Chief owns a group's result. When the group goes quiet (nothing running or queued) after a teammate
+   * posted something the Chief hasn't seen, the Chief is woken to check it: it either @mentions who should
+   * fix or finish what, which starts another round, or posts the final result to nobody, which ends it.
+   * After MAX_REVIEW_ROUNDS rounds without a final result it must post the best result so far.
+   */
+  private maybeReview(conversation: Conversation): void {
+    const { store } = this.opts;
+    const id = conversation.id;
+    if (conversation.kind !== "group") return;
+    if (this.discussions.has(id) || this.checks.has(id) || this.wrappingUp.has(id)) return;
+    // Others still running or queued: the last turn to finish decides (each turn releases itself before this).
+    if ((this.pendingTurns.get(id) ?? 0) > 0) return;
+    const chief = conversation.botIds.map((b) => store.bots.get(b)).find((b) => b?.isPrimary);
+    if (!chief) return;
+    const msgs = store.messages.list(id);
+    const review = this.reviews.get(id);
+    let from = 0;
+    msgs.forEach((m, i) => {
+      if (m.role === "user" || (m.role === "bot" && m.botId === chief.id && m.status !== "error") || m.id === review?.through) from = i + 1;
+    });
+    const fresh = msgs.slice(from).filter(
+      (m) => m.botId && m.botId !== chief.id && ((m.role === "bot" && (m.content.trim() || m.status === "error")) || (m.role === "system" && m.content.startsWith("Reply from "))),
+    );
+    if (!fresh.length) return;
+    const rounds = (review?.rounds ?? 0) + 1;
+    if (rounds > MAX_REVIEW_ROUNDS) return;
+    this.reviews.set(id, { rounds, through: msgs.at(-1)!.id });
+    const names = [...new Set(fresh.map((m) => store.bots.get(m.botId!)?.name ?? "a teammate"))].join(", ");
+    const note =
+      rounds < MAX_REVIEW_ROUNDS
+        ? [
+            `(Cadre, only you see this: the team has gone quiet. Review ${rounds} of ${MAX_REVIEW_ROUNDS}.) New from ${names} since you last spoke.`,
+            "You own the result. Check it against what the user asked: is it complete and correct (numbers add up, figures and sources real, assumptions stated, nothing missing)?",
+            "If anything is wrong, missing or unchecked, @mention who should fix it and say exactly what you need back.",
+            "If the job is done and checked, post the final result for the user in one clear message and @mention nobody. If only the user can decide something, ask them and @mention nobody.",
+          ].join(" ")
+        : `(Cadre, only you see this: last review, ${MAX_REVIEW_ROUNDS} of ${MAX_REVIEW_ROUNDS}.) Post the best final result for the user now, say plainly what is still unresolved, and @mention nobody.`;
+    const last = [...msgs].reverse().find((m) => m.role !== "user") ?? msgs.at(-1);
+    this.wake({ source: "bot", conversationId: id, botId: chief.id, messageId: last?.id, note });
   }
 
   /**
@@ -1165,6 +1277,8 @@ export class AgentRuntime {
 
 /** How often (in Bot turns without the user) the Chief checks whether a group discussion is going anywhere. */
 const CHIEF_CHECK_EVERY = 6;
+/** The Chief reviews a group's work at most this many times per user message before it must post a final result. */
+const MAX_REVIEW_ROUNDS = 8;
 
 /** Ends a group discussion and hands back to the user (stripped from the saved reply). */
 const OVER_TO_YOU = /\s*\[over to you\]\s*$/i;

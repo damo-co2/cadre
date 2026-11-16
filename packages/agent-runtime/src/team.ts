@@ -33,10 +33,13 @@ export interface TeamDeps {
   store: Store;
   emit: (e: ServerEvent) => void;
   scheduler: RoutineScheduler;
-  /** Post into a Bot's 1:1 conversation as a message from another Bot and wake it (chain-guarded). */
-  sendToBot: (fromBotId: string, toBotName: string, message: string) => Promise<ToolCallResult>;
-  /** Post a system message into a Bot's own conversation and wake it. */
-  wakeWith: (botId: string, content: string, fromBotId?: string) => void;
+  /**
+   * Message a teammate and wake it (chain-guarded). In `groupId` (or the group the sender is working in) it
+   * is posted in that group chat; otherwise in the teammate's own chat.
+   */
+  sendToBot: (fromBotId: string, toBotName: string, message: string, groupId?: string) => Promise<ToolCallResult>;
+  /** Post a system message and wake the Bot: in `groupId` when given (adding the Bot if it has room), else in its own chat. */
+  wakeWith: (botId: string, content: string, fromBotId?: string, groupId?: string) => { conversationId: string };
   isBusy: (conversationId: string) => boolean;
   /** Where a Bot's updates belong now: the group chat it is working in, else its own chat. */
   conversationFor: (botId: string) => string;
@@ -51,6 +54,12 @@ const TASK_TOOLS = new Set(["task_create", "task_update", "task_list"]);
  */
 export class TeamTools {
   constructor(private deps: TeamDeps) {}
+
+  /** The group chat a Bot is working in right now, if any. */
+  private groupOf(botId: string): string | null {
+    const id = this.deps.conversationFor(botId);
+    return this.deps.store.conversations.get(id)?.kind === "group" ? id : null;
+  }
 
   isTeamTool(name: string): boolean {
     return TEAM_TOOLS.has(name) || TASK_TOOLS.has(name);
@@ -332,16 +341,20 @@ export class TeamTools {
 
     let taskNote = "";
     const first = typeof a.first_task === "string" ? a.first_task.trim() : "";
+    // Hired from a group chat: the new Bot joins that group and starts there.
+    const groupId = this.groupOf(chief.id);
+    let where: string;
     if (first) {
-      const task = store.tasks.create({ title: oneLine(first, 200), detail: first, ownerBotId: bot.id, createdBy: chief.id });
+      const task = store.tasks.create({ title: oneLine(first, 200), detail: first, ownerBotId: bot.id, createdBy: chief.id, conversationId: groupId });
       this.deps.emit({ type: "task.updated", task });
-      this.deps.wakeWith(bot.id, `${introductionMessage(template, routines, chief.name)}\n\nAfter introducing yourself, start on your first task from ${chief.name} [${task.id.slice(0, 8)}]: ${first}\nWhen done, call task_update with status done and the result.`, chief.id);
+      where = this.deps.wakeWith(bot.id, `${introductionMessage(template, routines, chief.name)}\n\nAfter introducing yourself, start on your first task from ${chief.name} [${task.id.slice(0, 8)}]: ${first}\nWhen done, call task_update with status done and the result.`, chief.id, groupId ?? undefined).conversationId;
       taskNote = ` First task [${task.id.slice(0, 8)}] is on the board and ${bot.name} has started.`;
     } else {
-      this.deps.wakeWith(bot.id, introductionMessage(template, routines, chief.name), chief.id);
+      where = this.deps.wakeWith(bot.id, introductionMessage(template, routines, chief.name), chief.id, groupId ?? undefined).conversationId;
     }
+    const inGroup = !!groupId && where === groupId;
     return text(
-      `Hired ${bot.name} (${bot.label}) with ${routines.length} routine(s)${skipped.length ? `; skipped: ${skipped.join("; ")}` : ""}.${taskNote} It is introducing itself to the user in its own chat. Tell the user who you hired and why.`,
+      `Hired ${bot.name} (${bot.label}) with ${routines.length} routine(s)${skipped.length ? `; skipped: ${skipped.join("; ")}` : ""}.${taskNote} It is introducing itself ${inGroup ? "here in this group chat" : "to the user in its own chat"}. Tell the user who you hired and why.`,
     );
   }
 
@@ -409,7 +422,9 @@ export class TeamTools {
     if ("error" in owner) return fail(owner.error);
     const priority = TASK_PRIORITIES.includes(a.priority as never) ? (a.priority as Task["priority"]) : "normal";
     const detail = String(a.detail ?? "").slice(0, 8000);
-    const task = store.tasks.create({ title: title.slice(0, 200), detail, ownerBotId: owner.id, createdBy: caller.id, priority, dueAt: (a.due as string) || null });
+    // Handed out in a group chat: the task and its updates stay in that group.
+    const groupId = this.groupOf(caller.id);
+    const task = store.tasks.create({ title: title.slice(0, 200), detail, ownerBotId: owner.id, createdBy: caller.id, priority, dueAt: (a.due as string) || null, conversationId: groupId });
     this.deps.emit({ type: "task.updated", task });
     const id8 = task.id.slice(0, 8);
     if (owner.id && owner.id !== caller.id) {
@@ -418,6 +433,7 @@ export class TeamTools {
         caller.id,
         target.name,
         `New task [${id8}] (${priority}${task.dueAt ? `, due ${task.dueAt}` : ""}): ${title}\n${detail}\nWhen finished call task_update {"id":"${id8}","status":"done","result":"…"} with the actual result; if stuck, status "blocked" with what you need.`,
+        groupId ?? undefined,
       );
       if (r.isError) return text(`Task [${id8}] is on the board for ${target.name}, but it could not be woken now: ${r.content.map((p) => (p.type === "text" ? p.text : "")).join(" ")}`);
       return text(`Task [${id8}] assigned to ${target.name}; it has been messaged and is working on it. You will hear back when it updates the task.`);
@@ -451,7 +467,7 @@ export class TeamTools {
     const id8 = task.id.slice(0, 8);
     const notes: string[] = [`Task [${id8}] is now ${updated.status}.`];
     if (reassignedTo) {
-      await this.deps.sendToBot(caller.id, reassignedTo.name, `Task [${id8}] is now yours: ${updated.title}\n${updated.detail}\nUpdate it with task_update when done.`);
+      await this.deps.sendToBot(caller.id, reassignedTo.name, `Task [${id8}] is now yours: ${updated.title}\n${updated.detail}\nUpdate it with task_update when done.`, task.conversationId ?? undefined);
       notes.push(`${reassignedTo.name} has been told.`);
     }
     // Close the loop: whoever delegated it hears about done / blocked.
@@ -459,7 +475,7 @@ export class TeamTools {
     if (closedOrBlocked && task.createdBy && task.createdBy !== caller.id) {
       const creator = store.bots.get(task.createdBy);
       if (creator) {
-        await this.deps.sendToBot(caller.id, creator.name, `Task [${id8}] "${updated.title}" is ${updated.status}. ${updated.result ? `Result: ${updated.result}` : ""}`.trim());
+        await this.deps.sendToBot(caller.id, creator.name, `Task [${id8}] "${updated.title}" is ${updated.status}. ${updated.result ? `Result: ${updated.result}` : ""}`.trim(), task.conversationId ?? undefined);
         notes.push(`${creator.name} has been told.`);
       }
     } else if (closedOrBlocked && task.createdBy === null) {

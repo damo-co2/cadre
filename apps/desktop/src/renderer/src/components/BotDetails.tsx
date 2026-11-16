@@ -15,6 +15,8 @@ export function BotDetails({ bot, onClose }: { bot: Bot; onClose: () => void }) 
   const resetConversation = useStore((s) => s.resetConversation);
   const conversationId = useStore((s) => s.conversation?.id);
   const spaces = useStore((s) => s.spaces);
+  const allBots = useStore((s) => s.bots);
+  const spaceBots = allBots.filter((b) => b.spaceId === bot.spaceId && !b.hidden);
   const moveBotToSpace = useStore((s) => s.moveBotToSpace);
   // A Bot without its own model uses its space's default, then the app default.
   const effectiveDefault = useDefaultModel(bot.spaceId);
@@ -114,6 +116,25 @@ export function BotDetails({ bot, onClose }: { bot: Bot; onClose: () => void }) 
           {bot.modelRef && bot.modelRef !== appDefault && (
             <button onClick={() => void updateSettings({ defaultModelRef: bot.modelRef })} className="mt-1.5 text-xs text-accent hover:underline">
               Use {prettyModel(bot.modelRef)} as the default for all Bots
+            </button>
+          )}
+        </Field>
+
+        <Field label="Backup model">
+          <ModelPicker value={bot.backupModelRef} allowDefault defaultLabel="No backup" onChange={(ref) => void updateBot(bot.id, { backupModelRef: ref })} />
+          <p className="mt-1.5 text-xs text-muted">
+            {bot.backupModelRef
+              ? "If the main model runs out of credit or hits its usage limit, the reply is redone on this model, and it stays on it for 30 minutes before trying the main model again."
+              : "Pick a model to switch to if the main model runs out of credit or hits its usage limit."}
+          </p>
+          {bot.backupModelRef && spaceBots.some((b) => b.id !== bot.id && b.backupModelRef !== bot.backupModelRef) && (
+            <button
+              onClick={() => {
+                for (const b of spaceBots) if (b.backupModelRef !== bot.backupModelRef) void updateBot(b.id, { backupModelRef: bot.backupModelRef });
+              }}
+              className="mt-1.5 text-xs text-accent hover:underline"
+            >
+              Use {prettyModel(bot.backupModelRef)} as the backup for every Bot in {spaces.find((s) => s.id === bot.spaceId)?.name ?? "this space"}
             </button>
           )}
         </Field>
