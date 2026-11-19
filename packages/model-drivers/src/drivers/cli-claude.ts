@@ -170,9 +170,14 @@ export class ClaudeCodeDriver implements ModelDriver {
   }
 }
 
-/** Claude Code built-ins for the sandbox: reads anywhere, edits only under `cwd` (`//` = absolute path). */
+/**
+ * Claude Code built-ins for the sandbox: reads anywhere, edits only under `cwd` (`//` = absolute path).
+ * Web search and page fetch are always on and need no approval (they only read): research is far quicker
+ * and more reliable through them than by driving the browser through a search engine.
+ */
 export function claudeSandboxArgs(cwd: string | undefined): { tools: string; allowed: string[] } {
-  if (!cwd || !existsSync(cwd)) return { tools: "", allowed: [] };
+  const web = ["WebSearch", "WebFetch"];
+  if (!cwd || !existsSync(cwd)) return { tools: web.join(","), allowed: web };
   const root = cwd.replace(/\/+$/, "");
-  return { tools: "Read,Glob,Grep,Edit,Write", allowed: [`Edit(/${root}/**)`] };
+  return { tools: ["Read", "Glob", "Grep", "Edit", "Write", ...web].join(","), allowed: [`Edit(/${root}/**)`, ...web] };
 }

@@ -57,6 +57,8 @@ botsRoutes.delete("/:id", (c) => {
     if (task) c.get("emit")({ type: "task.updated", task });
   }
   store.bots.delete(id);
+  // Close its browser and delete its saved logins.
+  void c.get("computer").reset(id).catch(() => {});
   c.get("emit")({ type: "bot.deleted", botId: id });
   return c.body(null, 204);
 });

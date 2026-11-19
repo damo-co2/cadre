@@ -4,7 +4,8 @@
  * desktop's live view, user control hand-off and raw input dispatch.
  */
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from "playwright";
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
+import path from "node:path";
 import type { ScreenInput, ScreenState, TeachRecording } from "@grokbot/shared";
 import { TeachRecorder } from "./teach.js";
 
@@ -20,7 +21,15 @@ export type StateListener = (state: ScreenState) => void;
 export interface ScreenManagerOptions {
   headless: boolean;
   viewport: { width: number; height: number };
+  /**
+   * Folder for each Bot's saved browser session (cookies and site storage), so logins such as Facebook
+   * survive a restart. Unset: every browser starts empty.
+   */
+  sessionsDir?: string;
 }
+
+/** How often a live browser's session is saved (and once more on quit). */
+const SESSION_SAVE_MS = 30_000;
 
 interface Screen {
   state: ScreenState;
@@ -32,6 +41,8 @@ interface Screen {
   closing: boolean;
   watchers: Set<FrameListener>;
   screencasting: boolean;
+  /** Saves the session every SESSION_SAVE_MS while the browser is open. */
+  saveTimer?: ReturnType<typeof setInterval>;
   controlWaiters: Set<() => void>;
   recorder: TeachRecorder | null;
 }
@@ -166,13 +177,22 @@ export class ScreenManager {
     this.emit(s);
     try {
       const browser = await this.getBrowser();
-      const context = await browser.newContext({
+      const saved = this.sessionFile(s.state.botId);
+      const options = {
         viewport: this.opts.viewport,
         deviceScaleFactor: 1,
         userAgent: this.userAgent,
         locale: "en-US",
-        colorScheme: "light",
-      });
+        colorScheme: "light" as const,
+      };
+      // Pick up the Bot's logins from last time; a damaged file just means starting signed out.
+      const context = await browser
+        .newContext({ ...options, ...(saved && existsSync(saved) ? { storageState: saved } : {}) })
+        .catch(async (err) => {
+          if (!saved || !existsSync(saved)) throw err;
+          await fs.rm(saved, { force: true });
+          return browser.newContext(options);
+        });
       const page = await context.newPage();
       s.closing = false;
       page.on("framenavigated", (frame) => {
@@ -233,6 +253,11 @@ export class ScreenManager {
 
       s.context = context;
       s.page = page;
+      if (saved) {
+        if (s.saveTimer) clearInterval(s.saveTimer);
+        s.saveTimer = setInterval(() => void this.saveSession(s), SESSION_SAVE_MS);
+        s.saveTimer.unref?.();
+      }
       s.cdp = cdp;
       s.state.status = "ready";
       s.state.url = page.url();
@@ -249,8 +274,37 @@ export class ScreenManager {
     }
   }
 
+  private sessionFile(botId: string): string | null {
+    if (!this.opts.sessionsDir) return null;
+    return path.join(this.opts.sessionsDir, `${botId.replace(/[^\w-]/g, "_")}.json`);
+  }
+
+  /** Write the Bot's cookies and site storage to disk (owner-only), via a temp file so a crash can't corrupt it. */
+  private async saveSession(s: Screen): Promise<void> {
+    const file = this.sessionFile(s.state.botId);
+    const ctx = s.context;
+    if (!file || !ctx || s.closing) return;
+    try {
+      await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+      const tmp = `${file}.tmp`;
+      await ctx.storageState({ path: tmp });
+      await fs.chmod(tmp, 0o600);
+      await fs.rename(tmp, file);
+    } catch {
+      /* the context closed mid-save: the last good copy stays */
+    }
+  }
+
+  /** Forget a Bot's saved logins (Reset, or the Bot was deleted). */
+  async forgetSession(botId: string): Promise<void> {
+    const file = this.sessionFile(botId);
+    if (file) await fs.rm(file, { force: true }).catch(() => {});
+  }
+
   /** The page/context went away unexpectedly: drop it, recreate on next use. */
   private markLost(s: Screen, reason: string): void {
+    if (s.saveTimer) clearInterval(s.saveTimer);
+    s.saveTimer = undefined;
     s.page = null;
     s.context = null;
     s.cdp = null;
@@ -462,9 +516,11 @@ export class ScreenManager {
 
   // ---------- teardown ----------
 
+  /** Reset: close the browser and discard its session, so the Bot starts signed out. */
   async reset(botId?: string): Promise<void> {
     const targets = botId ? [this.screen(botId)] : [...this.screens.values()];
     await Promise.all(targets.map((s) => this.closeScreen(s)));
+    await Promise.all(targets.map((s) => this.forgetSession(s.state.botId)));
     if (!this.closed) {
       for (const s of targets) {
         if (s.watchers.size > 0) {
@@ -479,6 +535,8 @@ export class ScreenManager {
   private async closeScreen(s: Screen): Promise<void> {
     if (s.creating) await s.creating.catch(() => {});
     if (s.recorder) await this.stopRecording(s.state.botId).catch(() => {});
+    if (s.saveTimer) clearInterval(s.saveTimer);
+    s.saveTimer = undefined;
     s.closing = true;
     const ctx = s.context;
     s.page = null;
@@ -498,9 +556,11 @@ export class ScreenManager {
     s.closing = false;
   }
 
+  /** Quit: save every open browser's session first, then close (unlike Reset, logins are kept). */
   async shutdown(): Promise<void> {
     this.closed = true;
-    await this.reset();
+    await Promise.all([...this.screens.values()].map((s) => this.saveSession(s)));
+    await Promise.all([...this.screens.values()].map((s) => this.closeScreen(s)));
     const browser = this.browser ?? (await this.launching?.catch(() => null)) ?? null;
     this.browser = null;
     await browser?.close().catch(() => {});

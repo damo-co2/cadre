@@ -73,7 +73,7 @@ export class CodexDriver implements ModelDriver {
     // `--sandbox` is not accepted by `exec resume`, so the sandbox is set through config overrides.
     // Codex's own shell may change files only inside Cadre's sandbox folder (its working directory);
     // everywhere else it is read-only. Changes outside go through Cadre's shell_run, which asks the user.
-    const args = ["exec", "--json", "--skip-git-repo-check", "-m", input.model, ...codexSandboxArgs(input.cwd), "-c", 'approval_policy="never"'];
+    const args = ["exec", "--json", "--skip-git-repo-check", "-m", input.model, ...codexSandboxArgs(input.cwd), "-c", 'approval_policy="never"', ...CODEX_CADRE_FEATURES];
     // Developer instructions only stick on a new thread; resumed turns carry context in the prompt.
     if (!sessionId && input.system.trim()) args.push("-c", `developer_instructions=${JSON.stringify(input.system)}`);
     for (const m of input.mcpServers ?? []) {
@@ -272,6 +272,17 @@ function friendlyCodexError(message: string): string {
 }
 
 /** Write access for Codex's own shell: the sandbox folder (with internet for installs), nothing else. */
+/**
+ * Codex's own Computer Use and browser features drive the user's real Mac and browser, not the Bot's: off,
+ * so Bots use Cadre's browser (and its Auto Review). Live web search on: research without fighting a
+ * search engine in the browser.
+ */
+export const CODEX_CADRE_FEATURES = [
+  ...["computer_use", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser"].flatMap((f) => ["--disable", f]),
+  "-c",
+  'web_search="live"',
+];
+
 export function codexSandboxArgs(cwd: string | undefined): string[] {
   if (!cwd || !existsSync(cwd)) return ["-c", 'sandbox_mode="read-only"'];
   return [

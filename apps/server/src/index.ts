@@ -58,7 +58,8 @@ const emit = (event: ServerEvent) => {
   for (const ws of clients) sendTo(ws, event);
 };
 
-const computer = new ComputerService({ workspaceDir: WORKSPACE_DIR, headless: !store.settings.get().headedBrowser });
+// Each Bot's browser logins (cookies, site storage) are kept here so they survive a restart.
+const computer = new ComputerService({ workspaceDir: WORKSPACE_DIR, headless: !store.settings.get().headedBrowser, sessionsDir: resolve(DATA_DIR, "browser-sessions") });
 computer.onState((state) => emit({ type: "screen.state", state }));
 
 const FILES_DIR = resolve(DATA_DIR, "files");

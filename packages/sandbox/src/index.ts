@@ -36,6 +36,8 @@ export interface ComputerOptions {
   headless?: boolean;
   /** Screen size (default SCREEN_SIZE). */
   viewport?: { width: number; height: number };
+  /** Folder for each Bot's saved browser logins (cookies and site storage); unset = nothing is kept. */
+  sessionsDir?: string;
 }
 
 export interface CallToolOptions {
@@ -61,7 +63,7 @@ export class ComputerService {
     }
     this.workspaceDir = ws;
     this.viewport = opts.viewport ?? { ...SCREEN_SIZE };
-    this.screens = new ScreenManager({ headless: opts.headless ?? true, viewport: this.viewport });
+    this.screens = new ScreenManager({ headless: opts.headless ?? true, viewport: this.viewport, sessionsDir: opts.sessionsDir });
     for (const t of [...browserTools, ...shellAndFsTools]) this.tools.set(t.name, t);
     for (const name of COMPUTER_TOOL_NAMES) {
       if (!this.tools.has(name)) throw new Error(`sandbox: tool ${name} is declared in COMPUTER_TOOL_NAMES but not implemented`);
@@ -205,9 +207,14 @@ export class ComputerService {
     return this.screens.isRecording(botId);
   }
 
-  /** Close one screen (or all). Workspace files are kept. */
+  /** Close one screen (or all) and discard its saved logins. Workspace files are kept. */
   reset(botId?: string): Promise<void> {
     return this.screens.reset(botId);
+  }
+
+  /** Delete a Bot's saved browser logins (the Bot was deleted). */
+  forgetSession(botId: string): Promise<void> {
+    return this.screens.forgetSession(botId);
   }
 
   async shutdown(): Promise<void> {
