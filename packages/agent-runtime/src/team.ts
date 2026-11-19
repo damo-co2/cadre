@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Store } from "@grokbot/db";
 import type { ToolCallResult } from "@grokbot/sandbox";
-import type { Bot, Routine, ServerEvent, Task } from "@grokbot/shared";
+import type { Bot, Message, Routine, ServerEvent, Task } from "@grokbot/shared";
 import { MAX_BRIEF_LENGTH, MAX_ROUTINES_PER_BOT, TASK_PRIORITIES, TASK_STATUSES, makeModelRef, parseModelRef } from "@grokbot/shared";
 import { type RoutineScheduler, type RuntimeToolSpec, validateCron } from "./automation.js";
 import { allTemplates, findTemplate, instantiateTemplate, introductionMessage } from "./templates.js";
@@ -37,12 +37,14 @@ export interface TeamDeps {
    * Message a teammate and wake it (chain-guarded). In `groupId` (or the group the sender is working in) it
    * is posted in that group chat; otherwise in the teammate's own chat.
    */
-  sendToBot: (fromBotId: string, toBotName: string, message: string, groupId?: string) => Promise<ToolCallResult>;
+  sendToBot: (fromBotId: string, toBotName: string, message: string, groupId?: string | null) => Promise<ToolCallResult>;
   /** Post a system message and wake the Bot: in `groupId` when given (adding the Bot if it has room), else in its own chat. */
   wakeWith: (botId: string, content: string, fromBotId?: string, groupId?: string) => { conversationId: string };
   isBusy: (conversationId: string) => boolean;
   /** Where a Bot's updates belong now: the group chat it is working in, else its own chat. */
   conversationFor: (botId: string) => string;
+  /** The group chat a piece of work belongs to (see AgentRuntime.resolveWorkGroup); id null = no group. */
+  resolveGroup: (botId: string, opts: { targetId?: string; name?: string }) => { id?: string | null; error?: string };
 }
 
 const TEAM_TOOLS = new Set(["team_overview", "bot_read", "bot_hire", "bot_update", "bot_retire", "routine_assign"]);
@@ -76,6 +78,10 @@ export class TeamTools {
           owner: z.string().optional().describe("Bot name that owns it, or 'me' for yourself, or 'user' when only the user can do it. Default: yourself."),
           priority: z.enum(TASK_PRIORITIES).optional(),
           due: z.string().optional().describe("ISO date/time it is due, if any"),
+          group: z
+            .string()
+            .optional()
+            .describe('Title of the group chat this job belongs to: the task and every update about it then happen there, where the user follows it. Leave out to use the group you are in (or the one you share with the owner); "none" to keep it out of groups.'),
         },
       ),
       spec(
@@ -99,7 +105,7 @@ export class TeamTools {
     return [
       ...taskTools,
       spec("team_overview", "Full picture of the team right now: every Bot (role, model, busy, last activity, last thing it said), routines and next runs, the task board, pending approvals and recent failures.", {}),
-      spec("bot_read", "Read a Bot's recent conversation (its 1:1 chat with the user and other Bots) to know exactly what it is doing.", {
+      spec("bot_read", "Read a Bot's recent messages across its chats (its 1:1 chat and the group chats it works in) to know exactly what it is doing.", {
         bot: z.string().describe("Bot name"),
         limit: z.number().int().min(1).max(60).optional().describe("Messages to read (default 20)"),
       }),
@@ -275,15 +281,27 @@ export class TeamTools {
     const target = this.findBot(a.bot as string, chief);
     if (!target) return fail(`No Bot named "${a.bot}".`);
     const limit = Math.min(60, Math.max(1, Number(a.limit ?? 20)));
-    const conv = this.deps.store.conversations.directForBot(target.id);
-    const msgs = this.deps.store.messages.list(conv.id, 500).slice(-limit);
-    if (!msgs.length) return text(`${target.name} has no messages yet.`);
-    const lines = msgs.map((m) => {
-      const who = m.role === "user" ? "User" : m.role === "system" ? "System" : target.name;
+    const { store } = this.deps;
+    // Its 1:1 chat in full, plus what it said and was asked in its group chats: work often lives in a group.
+    const conv = store.conversations.directForBot(target.id);
+    const tagged: { m: Message; where: string }[] = store.messages.list(conv.id, 500).map((m) => ({ m, where: "1:1" }));
+    const mention = new RegExp(`@${target.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|to ${target.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`, "i");
+    for (const g of store.conversations.listGroups().filter((g) => g.botIds.includes(target.id))) {
+      for (const m of store.messages.list(g.id, 300)) {
+        if (m.botId === target.id || mention.test(m.content)) tagged.push({ m, where: `group "${g.title ?? "Group"}"` });
+      }
+    }
+    tagged.sort((x, y) => x.m.createdAt.localeCompare(y.m.createdAt));
+    const recent = tagged.slice(-limit);
+    if (!recent.length) return text(`${target.name} has no messages yet.`);
+    const nameOf = (id: string | null) => (id ? (store.bots.get(id)?.name ?? "Bot") : "User");
+    const lines = recent.map(({ m, where }) => {
+      const who = m.role === "user" ? "User" : m.role === "system" ? "System" : nameOf(m.botId);
       const tools = m.parts.filter((p) => p.type === "tool-call").map((p) => (p as { name: string }).name);
-      return `[${m.createdAt.slice(0, 16).replace("T", " ")}] ${who}: ${oneLine(m.content, 600)}${tools.length ? ` (tools: ${[...new Set(tools)].join(", ")})` : ""}`;
+      const state = m.status === "streaming" ? " (still working)" : m.status === "error" ? ` (failed${m.error ? `: ${oneLine(m.error, 120)}` : ""})` : "";
+      return `[${m.createdAt.slice(0, 16).replace("T", " ")} · ${where}] ${who}${state}: ${oneLine(m.content, 600)}${tools.length ? ` (tools: ${[...new Set(tools)].join(", ")})` : ""}`;
     });
-    return text(`${target.name} (${target.label ?? "no role"}), last ${msgs.length} messages:\n${lines.join("\n")}`);
+    return text(`${target.name} (${target.label ?? "no role"}), last ${recent.length} messages across its chats:\n${lines.join("\n")}`);
   }
 
   private async hire(chief: Bot, a: Record<string, unknown>): Promise<ToolCallResult> {
@@ -422,8 +440,11 @@ export class TeamTools {
     if ("error" in owner) return fail(owner.error);
     const priority = TASK_PRIORITIES.includes(a.priority as never) ? (a.priority as Task["priority"]) : "normal";
     const detail = String(a.detail ?? "").slice(0, 8000);
-    // Handed out in a group chat: the task and its updates stay in that group.
-    const groupId = this.groupOf(caller.id);
+    // The group this job belongs to (named, the one the caller is in, or the one it shares with the owner):
+    // the task and its updates stay there.
+    const where = owner.id ? this.deps.resolveGroup(caller.id, { targetId: owner.id, name: a.group as string | undefined }) : { id: this.groupOf(caller.id) };
+    if (where.error) return fail(where.error);
+    const groupId = where.id ?? null;
     const task = store.tasks.create({ title: title.slice(0, 200), detail, ownerBotId: owner.id, createdBy: caller.id, priority, dueAt: (a.due as string) || null, conversationId: groupId });
     this.deps.emit({ type: "task.updated", task });
     const id8 = task.id.slice(0, 8);
@@ -433,10 +454,15 @@ export class TeamTools {
         caller.id,
         target.name,
         `New task [${id8}] (${priority}${task.dueAt ? `, due ${task.dueAt}` : ""}): ${title}\n${detail}\nWhen finished call task_update {"id":"${id8}","status":"done","result":"…"} with the actual result; if stuck, status "blocked" with what you need.`,
-        groupId ?? undefined,
+        groupId, // decided above: this group, or null for the owner's own chat
       );
       if (r.isError) return text(`Task [${id8}] is on the board for ${target.name}, but it could not be woken now: ${r.content.map((p) => (p.type === "text" ? p.text : "")).join(" ")}`);
-      return text(`Task [${id8}] assigned to ${target.name}; it has been messaged and is working on it. You will hear back when it updates the task.`);
+      const inGroup = groupId ? store.conversations.get(groupId) : undefined;
+      return text(
+        inGroup
+          ? `Task [${id8}] assigned to ${target.name} in the group chat "${inGroup.title ?? "Group"}"; it is working on it there, and its updates will appear in that group.`
+          : `Task [${id8}] assigned to ${target.name}; it has been messaged and is working on it. You will hear back when it updates the task.`,
+      );
     }
     if (owner.id === null) {
       this.deps.emit({ type: "notify", botId: caller.id, conversationId: this.deps.conversationFor(caller.id), title: `${caller.name} needs you`, body: title, kind: "needs-attention" });

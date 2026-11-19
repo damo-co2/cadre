@@ -216,14 +216,45 @@ export const PIN_TEXT_MAX = 4000;
 
 export const createPinSchema = z.object({ messageId: z.string().min(1) });
 
-/** The readable text of a message: its content, else its text parts, else its attachment names. Cut to `max` characters. */
+/**
+ * A Bot's running commentary: text it wrote before a later tool step ("I'll check the official pages…"),
+ * as opposed to its answer. The message's last text block always counts as the answer, so a result written
+ * before a final task_update is never hidden. Returns the indexes of those parts.
+ */
+export function commentaryParts(parts: MessagePart[]): Set<number> {
+  const out = new Set<number>();
+  let lastText = -1;
+  let lastStep = -1;
+  parts.forEach((p, i) => {
+    if (p.type === "text" && p.text.trim()) lastText = i;
+    if (p.type === "tool-call" || p.type === "tool-result") lastStep = i;
+  });
+  parts.forEach((p, i) => {
+    if (p.type === "text" && i < lastStep && i !== lastText) out.add(i);
+  });
+  return out;
+}
+
+/** A Bot message's answer without its running commentary (falls back to the whole content). */
+export function answerText(m: Pick<Message, "content" | "parts">): string {
+  const skip = commentaryParts(m.parts);
+  if (!skip.size) return m.content;
+  const text = m.parts
+    .filter((p, i): p is Extract<MessagePart, { type: "text" }> => p.type === "text" && !skip.has(i))
+    .map((p) => p.text.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  return text || m.content;
+}
+
+/** The readable text of a message: its answer (no running commentary), else its text parts, else its attachment names. Cut to `max` characters. */
 export function messageText(m: Pick<Message, "content" | "parts" | "attachments">, max = PIN_TEXT_MAX): string {
   const fromParts = m.parts
     .filter((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")
     .map((p) => p.text)
     .join("\n\n");
   const files = m.attachments.map((a) => a.name).join(", ");
-  const text = (m.content.trim() || fromParts.trim() || (files ? `Files: ${files}` : "")).trim();
+  const text = (answerText(m).trim() || fromParts.trim() || (files ? `Files: ${files}` : "")).trim();
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 

@@ -1,7 +1,7 @@
 import { memo, useState } from "react";
 import { ArrowRightLeft, ChevronRight, ClipboardList, Download, ExternalLink, FileText, GraduationCap, Hand, Loader2, Pin, Repeat, Reply, UserMinus, UserPlus, Wrench } from "lucide-react";
 import type { Attachment, Bot, Message, MessagePart, ReplyQuote } from "@grokbot/shared";
-import { messageText, parseReply, plainPreview } from "@grokbot/shared";
+import { commentaryParts, messageText, parseReply, plainPreview } from "@grokbot/shared";
 import { fileUrl, workspaceUrl } from "../lib/api";
 import { formatBytes, isImageFile } from "../lib/files";
 import { useStore } from "../lib/store";
@@ -173,12 +173,16 @@ function PinButton({ message, className = "" }: { message: Message; className?: 
 type Segment = { kind: "activity"; parts: MessagePart[] } | { kind: "part"; part: MessagePart };
 const BEHIND_THE_SCENES = new Set<MessagePart["type"]>(["tool-call", "tool-result", "reasoning", "status"]);
 
-/** Consecutive tool calls, results, thinking and status lines fold into one "activity" row. */
+/**
+ * Consecutive tool calls, results, thinking and status lines fold into one "activity" row, and so does the
+ * Bot's running commentary between them ("I'll check the official pages…"): the message shows the answer.
+ */
 function segments(parts: MessagePart[]): Segment[] {
   const out: Segment[] = [];
-  for (const part of parts) {
+  const commentary = commentaryParts(parts);
+  for (const [i, part] of parts.entries()) {
     const last = out.at(-1);
-    if (BEHIND_THE_SCENES.has(part.type)) {
+    if (BEHIND_THE_SCENES.has(part.type) || commentary.has(i)) {
       if (last?.kind === "activity") last.parts.push(part);
       else out.push({ kind: "activity", parts: [part] });
     } else out.push({ kind: "part", part });
@@ -198,10 +202,13 @@ function Activity({ parts, active }: { parts: MessagePart[]; active: boolean }) 
   const counts = new Map<string, number>();
   for (const c of calls) counts.set(c.name, (counts.get(c.name) ?? 0) + 1);
   const tools = [...counts].map(([n, k]) => (k > 1 ? `${n} ×${k}` : n)).join(", ");
+  // While it works, its latest commentary line says what it's doing ("Checking the official pricing pages…").
+  const latestNote = [...parts].reverse().find((p): p is Extract<MessagePart, { type: "text" }> => p.type === "text")?.text.trim();
+  const doing = latestNote ? plainPreview(latestNote).split(/(?<=[.!?])\s/)[0]!.replace(/^I[’']?(ll|m)\s+/i, "").replace(/^\w/, (c) => c.toUpperCase()).slice(0, 110) : null;
   const label = active
     ? parts.at(-1)?.type === "reasoning" || onlyThinking
       ? "Thinking…"
-      : "Working…"
+      : (doing ?? "Working…")
     : onlyThinking
       ? "Thought"
       : `Worked · ${calls.length} step${calls.length === 1 ? "" : "s"}`;
@@ -210,7 +217,7 @@ function Activity({ parts, active }: { parts: MessagePart[]; active: boolean }) 
       <button onClick={() => setOpen((v) => !v)} className="flex max-w-full items-center gap-1.5 py-0.5 text-[13px] text-muted hover:text-fg" title={open ? "Hide steps" : "Show steps"}>
         <ChevronRight size={12} className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
         {active && <Loader2 size={12} className="shrink-0 animate-spin" />}
-        <span className="shrink-0 whitespace-nowrap">{label}</span>
+        <span className={`whitespace-nowrap ${active ? "min-w-0 truncate" : "shrink-0"}`}>{label}</span>
         {!active && tools && <span className="min-w-0 truncate font-mono text-[12px] opacity-70">{tools}</span>}
         {failed > 0 && <span className="shrink-0 text-[12px] text-danger">· {failed} failed</span>}
       </button>

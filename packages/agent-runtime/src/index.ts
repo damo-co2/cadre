@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "nod
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Bot, Conversation, Message, MessagePart, Routine, RoutineRun, ServerEvent } from "@grokbot/shared";
-import { MAX_GROUP_BOTS, MIN_GROUP_BOTS, makeModelRef, parseMentions, parseModelRef, parseReply } from "@grokbot/shared";
+import { MAX_GROUP_BOTS, MIN_GROUP_BOTS, answerText, makeModelRef, parseMentions, parseModelRef, parseReply } from "@grokbot/shared";
 import { ApprovalGate, review } from "./approvals.js";
 import { AutomationTools, RoutineScheduler, type RuntimeToolSpec } from "./automation.js";
 import { ConnectorManager } from "./connectors.js";
@@ -179,10 +179,14 @@ export class AgentRuntime {
       store: opts.store,
       emit: opts.emit,
       scheduler: this.scheduler,
-      sendToBot: (from, to, message, groupId) => this.handoff(from, { bot: to, message }, groupId),
+      sendToBot: (from, to, message, groupId) => this.handoff(from, { bot: to, message }, groupId, false),
       wakeWith: (botId, content, fromBotId, groupId) => ({ conversationId: this.postSystemAndWake(botId, content, fromBotId, groupId).conversationId }),
       isBusy: (conversationId) => this.queue.isBusy(conversationId),
       conversationFor: (botId) => this.conversationFor(botId),
+      resolveGroup: (botId, opts) => {
+        const r = this.resolveWorkGroup(botId, { ...opts, ask: true });
+        return r.error ? { error: r.error } : { id: r.group?.id ?? null };
+      },
     });
     this.scheduler.start();
     void this.connectors.start();
@@ -397,20 +401,35 @@ export class AgentRuntime {
             "Every member reads every message here, the user's included. Never repeat or pass on what the user said to a teammate (they already have it); @mention a teammate only to add something new or to ask them for something.",
             ...(bot.isPrimary
               ? [
-                  "A user message with no @mention comes to you and also reaches every teammate still working here (Cadre says who), who picks it up when their current reply ends. Answer only what is for you (status, plans, the team, or something no one is working on); if it is information for a working teammate, reply with exactly [no reply].",
+                  "A user message with no @mention comes to you, and also reaches the teammates Cadre names as still working on their reply in this group; they pick it up when that reply ends. Never leave the user without a reply: if what they said is for a teammate who is still working, say so in one short line (e.g. \"Monay will use that when she finishes this step.\"); if it's for an idle teammate, @mention them with it; otherwise answer it yourself.",
                 ]
               : []),
             ...(bot.isPrimary
               ? [
                   "If the work needs a teammate who isn't in this group, bring them in with group_invite, then @mention them.",
-                  "You own the outcome here. Check every result your teammates post before the user relies on it, send back what is wrong or missing with @mention, and keep going until you can post one final, checked result for the user (@mention nobody in that message). Cadre wakes you to review whenever the group goes quiet.",
+                  "Your teammates answer the user directly here. You are not a relay: never repeat, restate or summarise a teammate's answer, and don't thank or acknowledge them. Speak only to hand out work (once, clearly), to catch a real error or gap (@mention who should fix it and say exactly what), to combine several teammates' results into one final answer when the user needs one, or to answer what no one else can.",
+                  "Cadre wakes you to review whenever the group goes quiet. If what was posted is right, stay quiet: the user has already read it.",
                 ]
               : group.some((b) => b.isPrimary)
-                ? [`When you finish your part, post the result here and @mention ${group.find((b) => b.isPrimary)!.name}.`]
+                ? [
+                    `Post your results here for the user, written to the user, not to ${group.find((b) => b.isPrimary)!.name}. Don't @mention ${group.find((b) => b.isPrimary)!.name} to hand results over: it reads the group and steps in only if something needs fixing.`,
+                  ]
                 : []),
           ]
         : []),
     ];
+    // The Bot's group chats with recent activity, so work for those jobs goes there and not to 1:1 chats.
+    const recentGroups = this.opts.store.conversations
+      .listGroups()
+      .filter((g) => g.botIds.includes(bot.id) && g.id !== conversation?.id && Date.parse(g.updatedAt) > Date.now() - 24 * 3600_000)
+      .sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))
+      .slice(0, 5);
+    if (recentGroups.length) {
+      const names = (g: Conversation) => g.botIds.filter((id) => id !== bot.id).map((id) => this.opts.store.bots.get(id)?.name ?? "?").join(", ");
+      collab.push(
+        `Your active group chats: ${recentGroups.map((g) => `"${g.title ?? "Group"}" (with ${names(g)})`).join("; ")}. Work for one of those jobs belongs in that group even when the user asks you about it here: task_create and bot_message go there automatically when the teammate is in it, or pass group: "<title>". Results and updates for the job are posted there, where the user follows it.`,
+      );
+    }
     const chiefOfSpace = this.opts.store.bots.primaryOf(bot.spaceId);
     const chief = chiefOfSpace && chiefOfSpace.id !== bot.id ? chiefOfSpace : undefined;
     return [
@@ -469,6 +488,10 @@ export class AgentRuntime {
     const shape = {
       bot: z.string().describe("Name of the teammate (a Bot in your space)"),
       message: z.string().describe("What you need from it, with all the context it needs (it cannot see this conversation)"),
+      group: z
+        .string()
+        .optional()
+        .describe('Title of the group chat this is about, so it happens there. Leave out to use the group you are in (or the one you share with this teammate); "none" for a private 1:1.'),
     };
     return [
       {
@@ -647,13 +670,65 @@ export class AgentRuntime {
   }
 
   /**
+   * The chat a piece of work belongs to. No guessing: every job has one home, and the work goes there.
+   * 1. the group the Bot names ("none" = private 1:1);
+   * 2. `groupId`, the group the work already belongs to (a task's own group); null = decided: no group;
+   * 3. the group of the task(s) the message is about ("[db5a3666]"), if they all share one;
+   * 4. the group the Bot is working in right now;
+   * 5. otherwise its 1:1 chats. With `ask` (a Bot's own tool call) and a group it shares with that teammate
+   *    active in the last day, Cadre asks the Bot to say which instead of guessing.
+   */
+  resolveWorkGroup(
+    fromId: string,
+    opts: { targetId?: string; name?: string; groupId?: string | null; text?: string; ask?: boolean },
+  ): { group?: Conversation; error?: string } {
+    const { store } = this.opts;
+    const mine = store.conversations.listGroups().filter((g) => g.botIds.includes(fromId));
+    const list = (gs: Conversation[]) => gs.map((g) => `"${g.title ?? "Group"}"`).join(", ") || "(none)";
+    const name = opts.name?.trim();
+    if (name && /^(none|no|own chat|1:1|direct|private)$/i.test(name)) return {};
+    if (name) {
+      const want = name.toLowerCase().replace(/^["']|["']$/g, "");
+      const exact = mine.filter((g) => (g.title ?? "").toLowerCase() === want);
+      const partial = mine.filter((g) => (g.title ?? "").toLowerCase().includes(want));
+      const hit = exact.length === 1 ? exact[0] : partial.length === 1 ? partial[0] : undefined;
+      if (hit) return { group: hit };
+      return { error: partial.length > 1 ? `"${name}" matches several of your group chats: ${list(mine)}. Use the full title.` : `You're not in a group chat called "${name}". Your group chats: ${list(mine)}.` };
+    }
+    if (opts.groupId === null) return {};
+    const given = opts.groupId ? store.conversations.get(opts.groupId) : undefined;
+    if (given?.kind === "group") return { group: given };
+    // About a task that lives in a group: that group.
+    const taskGroups = new Set<string>();
+    for (const id of new Set((opts.text ?? "").match(/\b[0-9a-f]{8}\b/g) ?? [])) {
+      const t = store.tasks.find(id);
+      if (t?.conversationId && store.conversations.get(t.conversationId)?.kind === "group") taskGroups.add(t.conversationId);
+    }
+    if (taskGroups.size === 1) return { group: store.conversations.get([...taskGroups][0]!)! };
+    const activeId = this.active.get(fromId)?.conversationId;
+    const working = activeId ? store.conversations.get(activeId) : undefined;
+    if (working?.kind === "group") return { group: working };
+    if (opts.ask && opts.targetId) {
+      const since = Date.now() - ASK_GROUP_WITHIN_MS;
+      const shared = mine.filter((g) => g.botIds.includes(opts.targetId!) && Date.parse(g.updatedAt) > since);
+      if (shared.length) {
+        const who = store.bots.get(opts.targetId)?.name ?? "this teammate";
+        return {
+          error: `You and ${who} are both in ${list(shared)}. Is this for ${shared.length === 1 ? "that group's job" : "one of those jobs"}? Call again with group: "<title>" so it happens there, where the user follows it, or group: "none" if it is a separate private job.`,
+        };
+      }
+    }
+    return {};
+  }
+
+  /**
    * bot_message: wake a teammate with a message (loop-guarded). Work that belongs to a group chat stays in it:
    * the group the sender is working in, else `groupId` (e.g. the group a task was handed out in). A teammate
    * not yet in that group is added. Only outside any group does it go to the teammate's own chat.
    */
-  private async handoff(fromBotId: string, input: unknown, groupId?: string): Promise<ToolCallResult> {
+  private async handoff(fromBotId: string, input: unknown, groupId?: string | null, ask = true): Promise<ToolCallResult> {
     const store = this.opts.store;
-    const a = (input ?? {}) as { bot?: string; message?: string };
+    const a = (input ?? {}) as { bot?: string; message?: string; group?: string };
     const fail = (t: string): ToolCallResult => ({ isError: true, content: [{ type: "text", text: t }] });
     const from = store.bots.get(fromBotId);
     if (!from) return fail("Unknown bot");
@@ -675,10 +750,10 @@ export class AgentRuntime {
     const message = String(a.message ?? "").trim();
     if (!message) return fail("Say what you need from them in message.");
     // Group work stays in the group: any member (or the Chief) pulls a missing teammate in.
-    const activeId = this.active.get(from.id)?.conversationId;
-    const working = activeId ? store.conversations.get(activeId) : undefined;
-    const hinted = groupId ? store.conversations.get(groupId) : undefined;
-    const group = working?.kind === "group" ? working : hinted?.kind === "group" ? hinted : undefined;
+    const resolved = this.resolveWorkGroup(from.id, { targetId: target.id, name: a.group, groupId, text: message, ask });
+    if (resolved.error) return fail(resolved.error);
+    const group = resolved.group;
+    const here = this.active.get(from.id)?.conversationId === group?.id;
     if (group?.kind === "group") {
       let member = group.botIds.includes(target.id);
       if (!member && (from.isPrimary || group.botIds.includes(from.id))) member = !this.changeGroupMembers(group.id, [target.id], [], from.name).error;
@@ -691,7 +766,14 @@ export class AgentRuntime {
         });
         this.opts.emit({ type: "message.created", message: msg });
         this.passOn(store.conversations.get(group.id)!, from, [target.id], msg.id);
-        return { content: [{ type: "text", text: `Posted to ${target.name} in this group chat; its answer will appear here.` }] };
+        return {
+          content: [
+            {
+              type: "text",
+              text: here ? `Posted to ${target.name} in this group chat; its answer will appear here.` : `Posted to ${target.name} in the group chat "${group.title ?? "Group"}"; its answer will appear there, where the user sees it.`,
+            },
+          ],
+        };
       }
     }
     const conv = store.conversations.directForBot(target.id);
@@ -889,7 +971,7 @@ export class AgentRuntime {
           return m.role === "bot" && m.botId === bot.id
             ? { role: "assistant" as const, content }
             : m.role === "bot"
-              ? { role: "user" as const, content: `[${nameOf(m.botId)}]: ${content}` }
+              ? { role: "user" as const, content: `[${nameOf(m.botId)}]: ${m.attachments.length ? content.replace(m.content, answerText(m)) : answerText(m)}` } // teammates' answers, not their running commentary
               : { role: "user" as const, content };
         });
       if (fitted.summary) {
@@ -1041,6 +1123,13 @@ export class AgentRuntime {
       store.messages.delete(reply.id);
       emit({ type: "message.deleted", messageId: reply.id, conversationId: ev.conversationId });
       emit({ type: "bot.status", botId: bot.id, status: "idle" });
+      // The Chief went quiet on the user's own message in a group: nobody may be answering it. Once more, with a nudge.
+      if (conversation?.kind === "group" && bot.isPrimary && ev.source === "user" && !ev.note && !ev.checkIn) {
+        this.wake({
+          ...ev,
+          note: "(Cadre: the user is waiting for a reply to their last message. Reply now in one or two short lines; [no reply] isn't an option here. If it's for a teammate who is still working, say who will pick it up.)",
+        });
+      }
       if (conversation?.kind === "group") {
         if (ev.checkIn) this.resumeAfterCheck(conversation);
         else {
@@ -1133,11 +1222,17 @@ export class AgentRuntime {
     const note =
       rounds < MAX_REVIEW_ROUNDS
         ? [
-            `(Cadre, only you see this: the team has gone quiet. Review ${rounds} of ${MAX_REVIEW_ROUNDS}.) New from ${names} since you last spoke.`,
-            "You own the result. Check it against what the user asked: is it complete and correct (numbers add up, figures and sources real, assumptions stated, nothing missing)?",
-            "If anything is wrong, missing or unchecked, @mention who should fix it and say exactly what you need back.",
-            "If the job is done and checked, post the final result for the user in one clear message and @mention nobody. If only the user can decide something, ask them and @mention nobody.",
-          ].join(" ")
+            `(Cadre, only you see this: the group has gone quiet. Review ${rounds} of ${MAX_REVIEW_ROUNDS}.) New from ${names} since you last spoke; the user has already read it.`,
+            "Check it against what the user asked: complete and correct (numbers add up, sources real, assumptions stated, nothing missing)?",
+            "If it is right and answers the user, reply with exactly [no reply]. Don't restate, summarise or acknowledge it.",
+            "If anything is wrong, missing or unchecked, @mention who should fix it and say exactly what you need.",
+            fresh.some((m) => m.botId !== fresh[0]!.botId)
+              ? "If the user needs one answer that combines several teammates' results, post it once, short, and @mention nobody."
+              : "",
+            "If only the user can decide something, ask them in one line and @mention nobody.",
+          ]
+            .filter(Boolean)
+            .join(" ")
         : `(Cadre, only you see this: last review, ${MAX_REVIEW_ROUNDS} of ${MAX_REVIEW_ROUNDS}.) Post the best final result for the user now, say plainly what is still unresolved, and @mention nobody.`;
     const last = [...msgs].reverse().find((m) => m.role !== "user") ?? msgs.at(-1);
     this.wake({ source: "bot", conversationId: id, botId: chief.id, messageId: last?.id, note });
@@ -1280,6 +1375,8 @@ export class AgentRuntime {
 
 /** How often (in Bot turns without the user) the Chief checks whether a group discussion is going anywhere. */
 const CHIEF_CHECK_EVERY = 6;
+/** A Bot handing out work from its own chat is asked to pick a group it shares with the teammate if that group was this recent. */
+const ASK_GROUP_WITHIN_MS = 24 * 3600_000;
 /** The Chief reviews a group's work at most this many times per user message before it must post a final result. */
 const MAX_REVIEW_ROUNDS = 8;
 
