@@ -63,7 +63,7 @@ const computer = new ComputerService({ workspaceDir: WORKSPACE_DIR, headless: !s
 computer.onState((state) => emit({ type: "screen.state", state }));
 
 const FILES_DIR = resolve(DATA_DIR, "files");
-// A restart mid-reply leaves the reply "streaming" forever; nothing can resume it now.
+// A restart mid-reply leaves the reply "streaming": mark it stopped (its turn is picked up again once we're listening).
 const orphans = store.messages.stopOrphans();
 if (orphans) console.log(`marked ${orphans} unfinished repl${orphans === 1 ? "y" : "ies"} as stopped`);
 const runtime = new AgentRuntime({ store, drivers, emit, computer, workspaceDir: WORKSPACE_DIR, serverUrl: SERVER_URL, filesDir: FILES_DIR, pluginsDir: resolve(DATA_DIR, "plugins") });
@@ -218,6 +218,9 @@ app.onError((err, c) => {
 const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`cadre server listening on http://localhost:${info.port}  (data: ${DATA_DIR})`);
   console.log(`phone access: ${access.hosts().map((h) => `http://${h}:${info.port}`).join("  ")}  (scan the QR in Settings → Phone)`);
+  // Only now: CLI Bots reach Cadre's tools through this server.
+  const resumed = runtime.resumeAfterRestart();
+  if (resumed) console.log(`picked up ${resumed} Bot turn${resumed === 1 ? "" : "s"} cut off by the restart`);
 });
 injectWebSocket(server);
 

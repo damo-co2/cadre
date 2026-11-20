@@ -58,6 +58,7 @@ export interface Store {
   settings: SettingsRepo;
   providers: ProviderRepo;
   driverSessions: DriverSessionRepo;
+  runtime: RuntimeRepo;
   approvals: ApprovalRepo;
   rules: RuleRepo;
   memories: MemoryRepo;
@@ -100,6 +101,7 @@ export function openStore(dataDir: string): Store {
     settings: new SettingsRepo(db),
     providers: new ProviderRepo(db, secrets),
     driverSessions: new DriverSessionRepo(db),
+    runtime: new RuntimeRepo(db),
     approvals: new ApprovalRepo(db),
     rules: new RuleRepo(db),
     memories: new MemoryRepo(db),
@@ -1505,6 +1507,59 @@ export class ProviderRepo {
 }
 
 // ---------- Driver sessions ----------
+
+// ---------- Runtime: Bot turns and state that survive a restart ----------
+
+export interface PendingWakeRow {
+  id: string;
+  conversationId: string;
+  botId: string;
+  event: string;
+  startedAt: string | null;
+  resumes: number;
+  createdAt: string;
+}
+
+export class RuntimeRepo {
+  constructor(private db: Db) {}
+
+  addWake(input: { conversationId: string; botId: string; event: string; resumes?: number; createdAt?: string }): string {
+    const id = newId();
+    this.db
+      .insert(schema.pendingWakes)
+      .values({ id, conversationId: input.conversationId, botId: input.botId, event: input.event, startedAt: null, resumes: input.resumes ?? 0, createdAt: input.createdAt ?? nowIso() })
+      .run();
+    return id;
+  }
+
+  startWake(id: string): void {
+    this.db.update(schema.pendingWakes).set({ startedAt: nowIso() }).where(eq(schema.pendingWakes.id, id)).run();
+  }
+
+  removeWake(id: string): void {
+    this.db.delete(schema.pendingWakes).where(eq(schema.pendingWakes.id, id)).run();
+  }
+
+  /** Oldest first, so lanes resume in the order they were queued. */
+  listWakes(): PendingWakeRow[] {
+    return this.db.select().from(schema.pendingWakes).orderBy(asc(schema.pendingWakes.createdAt)).all();
+  }
+
+  getState<T>(key: string): T | undefined {
+    const row = this.db.select().from(schema.runtimeState).where(eq(schema.runtimeState.key, key)).get();
+    if (!row) return undefined;
+    try {
+      return JSON.parse(row.value) as T;
+    } catch {
+      return undefined;
+    }
+  }
+
+  setState(key: string, value: unknown): void {
+    const v = JSON.stringify(value);
+    this.db.insert(schema.runtimeState).values({ key, value: v }).onConflictDoUpdate({ target: schema.runtimeState.key, set: { value: v } }).run();
+  }
+}
 
 export class DriverSessionRepo {
   constructor(private db: Db) {}

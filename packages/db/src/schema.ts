@@ -73,6 +73,23 @@ export const driverSessions = sqliteTable("driver_sessions", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/** Bot turns queued or running, so a restart can pick them back up (removed when the turn ends). */
+export const pendingWakes = sqliteTable("pending_wakes", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull(),
+  botId: text("bot_id").notNull(),
+  event: text("event").notNull(), // JSON WakeEvent
+  startedAt: text("started_at"),
+  resumes: integer("resumes").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+});
+
+/** Small runtime state that should survive a restart (group discussions, review rounds, loop guards). */
+export const runtimeState = sqliteTable("runtime_state", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(), // JSON
+});
+
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(), // JSON
@@ -361,6 +378,19 @@ CREATE TABLE IF NOT EXISTS driver_sessions (
   session_id TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (conversation_id, bot_id, provider)
+);
+CREATE TABLE IF NOT EXISTS pending_wakes (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  bot_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  started_at TEXT,
+  resumes INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runtime_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,

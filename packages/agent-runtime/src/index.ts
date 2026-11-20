@@ -49,6 +49,36 @@ export interface WakeEvent {
   note?: string;
   /** The Chief checking on a group discussion: [carry on] lets it continue, anything else steps in. */
   checkIn?: boolean;
+  /** The routine run this turn belongs to (finished when the turn ends, even after a restart). */
+  routineRunId?: string;
+  /** Picked back up after Cadre restarted in the middle of it. */
+  resumed?: boolean;
+}
+
+/** A turn cut off by a restart is picked up again at most this many times (a crash loop stops there). */
+const MAX_RESUMES = 2;
+/** Turns older than this aren't picked up after a restart (the moment has passed). */
+const RESUME_WITHIN_MS = 12 * 3600_000;
+const RESTART_NOTE =
+  "(Cadre: the app restarted while you were working on this, so your last reply was cut off; it's marked stopped above. Carry on from where you stopped: don't redo steps you already finished and don't repeat what you already posted. If it was already done, reply with exactly [no reply].)";
+
+/** A Map that reports every change, so the runtime can save it (see AgentRuntime.saveState). */
+class SavedMap<K, V> extends Map<K, V> {
+  onChange?: () => void;
+  override set(key: K, value: V): this {
+    super.set(key, value);
+    this.onChange?.();
+    return this;
+  }
+  override delete(key: K): boolean {
+    const had = super.delete(key);
+    if (had) this.onChange?.();
+    return had;
+  }
+  override clear(): void {
+    super.clear();
+    this.onChange?.();
+  }
 }
 
 /** Everything a model can call: the computer's tools plus skill/routine tools. */
@@ -141,25 +171,29 @@ export class AgentRuntime {
   /** `${botId}\u0000${modelRef}` → until when that main model is treated as out of credit. */
   private outOfCredit = new Map<string, number>();
   /** Bot-initiated wakes since the last user message, per conversation (loop guard). */
-  private chain = new Map<string, number>();
+  private chain = new SavedMap<string, number>();
   /** Group chats where the Chief has been asked to wrap up: no more Bot handoffs until the user speaks. */
-  private wrappingUp = new Map<string, string>(); // conversationId → the Chief wrapping up
+  private wrappingUp = new SavedMap<string, string>(); // conversationId → the Chief wrapping up
   /** Group discussions started with @everyone: turns keep passing between Bots until done. */
-  private discussions = new Map<string, { quiet: number }>();
+  private discussions = new SavedMap<string, { quiet: number }>();
   /** Group chats: the Chief's review rounds since the user last spoke, and the last message it was asked to review. */
-  private reviews = new Map<string, { rounds: number; through: string }>();
+  private reviews = new SavedMap<string, { rounds: number; through: string }>();
   /** Turns queued or running per conversation (so a discussion waits for everyone's opening reply). */
   private pendingTurns = new Map<string, number>();
   /** shell_run calls Auto Review allowed only on condition they run confined to the sandbox. */
   private confineNext = new Set<string>();
   /** Group chats where the Chief is checking in: the Bots to wake if it says [carry on]. */
-  private checks = new Map<string, string[]>();
+  private checks = new SavedMap<string, string[]>();
+  /** Set on shutdown: turns cut off now stay saved so the next start picks them up. */
+  private stopping = false;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   get workspaceDir(): string {
     return this.opts.workspaceDir;
   }
 
   constructor(private opts: RuntimeOptions) {
+    this.loadState();
     this.approvals = new ApprovalGate(opts.store, opts.emit);
     const profileChanged = (learned?: string[]) => opts.emit({ type: "profile.updated", ...(learned?.length ? { learned } : {}) });
     this.memory = new MemoryRewriter(opts.store, opts.drivers, (bot) => this.resolveModelRef(bot), profileChanged);
@@ -247,6 +281,8 @@ export class AgentRuntime {
   }
 
   async shutdown(): Promise<void> {
+    this.stopping = true;
+    this.flushState();
     this.scheduler.stop();
     await this.connectors.shutdown();
   }
@@ -306,9 +342,11 @@ export class AgentRuntime {
   }
 
   /** Same as wake, but resolves with the Bot's final message once the turn is done. */
-  wakeAndWait(ev: WakeEvent): Promise<Message | undefined> {
+  wakeAndWait(ev: WakeEvent, saved: { resumes?: number; createdAt?: string } = {}): Promise<Message | undefined> {
     let result: Message | undefined;
     const id = ev.conversationId;
+    // Saved until the turn ends, so a restart (quit, update, crash) picks it back up.
+    const wakeId = this.opts.store.runtime.addWake({ conversationId: id, botId: ev.botId, event: JSON.stringify(ev), ...saved });
     this.pendingTurns.set(id, (this.pendingTurns.get(id) ?? 0) + 1);
     // Counts this turn as finished, once. A turn calls it itself right before deciding whether to pass a
     // discussion on: with Bots replying at the same time, only the last one to finish then sees 0 left.
@@ -322,10 +360,13 @@ export class AgentRuntime {
     };
     return this.queue
       .enqueue(id, ev.botId, async (signal) => {
+        this.opts.store.runtime.startWake(wakeId);
         try {
           result = await this.runTurn(ev, signal, release);
         } finally {
           release();
+          // Quitting: keep it saved only if it was cut off (a turn that finished just now is done).
+          if (!this.stopping || (result && result.status !== "stopped" && result.status !== "streaming")) this.opts.store.runtime.removeWake(wakeId);
         }
       })
       .then(() => result);
@@ -339,13 +380,94 @@ export class AgentRuntime {
     const content = [`Routine "${routine.name}" (${label}): ${routine.instruction}`, payload ? `\nTrigger data:\n${payload.slice(0, 8000)}` : ""].join("");
     const trigger = store.messages.create({ conversationId, role: "system", botId: routine.botId, content });
     this.opts.emit({ type: "message.created", message: trigger });
-    const reply = await this.wakeAndWait({ source: run.source === "webhook" ? "webhook" : "routine", conversationId, botId: routine.botId, messageId: trigger.id });
-    const finished = store.routines.finishRun(run.id, {
-      status: reply?.status === "error" ? "error" : "done",
+    const reply = await this.wakeAndWait({ source: run.source === "webhook" ? "webhook" : "routine", conversationId, botId: routine.botId, messageId: trigger.id, routineRunId: run.id });
+    if (!this.stopping) this.finishRoutineRun(run.id, reply);
+  }
+
+  private finishRoutineRun(runId: string, reply: Message | undefined, error?: string): void {
+    const finished = this.opts.store.routines.finishRun(runId, {
+      status: error || reply?.status === "error" ? "error" : "done",
       messageId: reply?.id ?? null,
-      error: reply?.error ?? null,
+      error: error ?? reply?.error ?? null,
     });
     if (finished) this.opts.emit({ type: "routine.run", run: finished });
+  }
+
+  /**
+   * After a restart: run again the Bot turns that were queued or cut off. A cut-off turn gets a note to
+   * carry on from where it stopped (its partial reply stays, marked stopped). Call once, at startup,
+   * after unfinished replies have been marked stopped.
+   */
+  resumeAfterRestart(): number {
+    const { store, emit } = this.opts;
+    let resumed = 0;
+    for (const row of store.runtime.listWakes()) {
+      store.runtime.removeWake(row.id);
+      let ev: WakeEvent;
+      try {
+        ev = JSON.parse(row.event) as WakeEvent;
+      } catch {
+        continue;
+      }
+      const bot = store.bots.get(row.botId);
+      const conversation = store.conversations.get(row.conversationId);
+      const cutOff = !!row.startedAt;
+      const stale = Date.now() - Date.parse(row.createdAt) > RESUME_WITHIN_MS;
+      if (!bot || !conversation || stale || (cutOff && row.resumes >= MAX_RESUMES)) {
+        if (ev.routineRunId) this.finishRoutineRun(ev.routineRunId, undefined, "Cadre restarted before this run finished.");
+        if (bot && conversation && cutOff && !stale) {
+          const m = store.messages.create({
+            conversationId: conversation.id,
+            role: "system",
+            botId: bot.id,
+            content: `Cadre restarted ${row.resumes + 1} times while ${bot.name} was working on this, so it has stopped. Ask again to retry.`,
+          });
+          emit({ type: "message.created", message: m });
+        }
+        continue;
+      }
+      const next: WakeEvent = cutOff ? { ...ev, resumed: true, note: [RESTART_NOTE, ev.note].filter(Boolean).join("\n\n") } : ev;
+      const done = this.wakeAndWait(next, { resumes: cutOff ? row.resumes + 1 : row.resumes, createdAt: row.createdAt });
+      void done
+        .then((reply) => {
+          if (ev.routineRunId && !this.stopping) this.finishRoutineRun(ev.routineRunId, reply);
+        })
+        .catch((err) => emit({ type: "error", message: String(err), conversationId: row.conversationId }));
+      resumed++;
+    }
+    return resumed;
+  }
+
+  /** Group-chat state (discussions, review rounds, loop guards) is saved so a restart doesn't lose it. */
+  private loadState(): void {
+    const saved = this.opts.store.runtime.getState<Record<string, [string, unknown][]>>("groups");
+    const maps = this.stateMaps();
+    for (const [key, map] of Object.entries(maps)) {
+      for (const [k, v] of saved?.[key] ?? []) if (this.opts.store.conversations.get(k)) (map as Map<string, unknown>).set(k, v);
+      map.onChange = () => this.saveState();
+    }
+  }
+
+  private stateMaps() {
+    return { chain: this.chain, wrappingUp: this.wrappingUp, discussions: this.discussions, reviews: this.reviews, checks: this.checks };
+  }
+
+  private saveState(): void {
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => this.flushState(), 500);
+    this.saveTimer.unref?.();
+  }
+
+  private flushState(): void {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    const out: Record<string, [string, unknown][]> = {};
+    for (const [key, map] of Object.entries(this.stateMaps())) out[key] = [...(map as Map<string, unknown>).entries()];
+    try {
+      this.opts.store.runtime.setState("groups", out);
+    } catch {
+      // the store may already be closed on the way out
+    }
   }
 
   resolveModelRef(bot: Bot): string {
@@ -451,7 +573,7 @@ export class AgentRuntime {
       "When you finish a task, reply with the result itself (numbers, names, quotes), not a description of what you did.",
       `Current date/time: ${new Date().toLocaleString("en-US", { timeZone: tz })} (${tz}).`,
       "",
-      memoryPromptSection(this.opts.store, bot),
+      memoryPromptSection(this.opts.store, bot, conversation?.id),
       "",
       this.automation.skillsPromptSection(bot),
       "",
@@ -1015,8 +1137,18 @@ export class AgentRuntime {
     let text = "";
     let errorText: string | null = null;
     let lastFlush = Date.now();
+    let trailing: ReturnType<typeof setTimeout> | null = null;
     const flush = (force = false) => {
-      if (!force && Date.now() - lastFlush < 400) return;
+      if (!force && Date.now() - lastFlush < 400) {
+        // Save the tail soon anyway, so a restart mid-reply keeps everything said so far.
+        trailing ??= setTimeout(() => {
+          trailing = null;
+          if (store.messages.get(reply.id)?.status === "streaming") flush(true);
+        }, 400);
+        return;
+      }
+      if (trailing) clearTimeout(trailing);
+      trailing = null;
       lastFlush = Date.now();
       store.messages.update(reply.id, { content: text, parts });
     };
@@ -1038,6 +1170,7 @@ export class AgentRuntime {
 
     this.active.set(bot.id, { conversationId: ev.conversationId, messageId: reply.id, signal, pushPart, userMessages });
     if (mainOut) pushPart({ type: "status", text: `Using the backup model ${backupRef}: ${mainRef} ran out of credit recently.` });
+    if (ev.resumed) pushPart({ type: "status", text: "Picked up again after Cadre restarted." });
 
     try {
       for (let attempt = 0; ; attempt++) {
@@ -1180,8 +1313,7 @@ export class AgentRuntime {
     if (!errorText && !stopped && groupNow?.kind === "group" && text.trim() && !this.wrappingUp.has(groupNow.id)) {
       const targets = handBack ? [] : this.groupTargets(groupNow, text, bot.id);
       if (targets.length) {
-        const disc = this.discussions.get(groupNow.id);
-        if (disc) disc.quiet = 0;
+        if (this.discussions.has(groupNow.id)) this.discussions.set(groupNow.id, { quiet: 0 });
         this.passOn(groupNow, bot, targets, final.id);
       } else this.continueDiscussion(groupNow, bot, { quiet: false, handBack, messageId: final.id });
     }
@@ -1251,6 +1383,7 @@ export class AgentRuntime {
       return;
     }
     disc.quiet = turn.quiet ? disc.quiet + 1 : 0;
+    this.discussions.set(conversation.id, disc);
     if (disc.quiet >= Math.max(1, conversation.botIds.length - 1)) {
       this.discussions.delete(conversation.id); // nobody has anything new: the discussion has run its course
       return;
