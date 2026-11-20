@@ -31,6 +31,20 @@ import { api, type CreateSquadInput } from "./api";
 const MESSAGE_PAGE = 50;
 import type { CreateFromTemplateInput } from "@grokbot/shared";
 
+/** A file to show in the in-app viewer (a Bot's workspace file or an attachment). */
+export interface ViewerTarget {
+  name: string;
+  /** Where the bytes are. */
+  url: string;
+  downloadUrl: string;
+  /** Folder-like URL for HTML pages (so their CSS and images load); falls back to url. */
+  viewUrl?: string;
+  /** Workspace path, shown under the name. */
+  path?: string;
+  size?: number;
+  mimeType?: string;
+}
+
 export interface AppNotification {
   id: string;
   botId: string;
@@ -83,6 +97,8 @@ interface State {
   /** Connect apps (MCP servers). */
   connectors: AppConnector[];
   connectAppsOpen: boolean;
+  /** The file shown in the in-app viewer, if any. */
+  viewer: ViewerTarget | null;
   /** Recent "notify" events for conversations that were not open at the time (newest first). */
   notifications: AppNotification[];
   settingsOpen: boolean;
@@ -187,6 +203,8 @@ interface State {
   fillSecureForm(id: string, values: Record<string, string>, title?: string): Promise<void>;
   cancelSecureForm(id: string): Promise<void>;
   setConnectAppsOpen(v: boolean): void;
+  openViewer(t: ViewerTarget): void;
+  closeViewer(): void;
   /** Send a ClientMessage over the events WebSocket. Set by App from connectEvents. */
   wsSend(msg: ClientMessage): void;
   setWsSend(fn: (msg: ClientMessage) => void): void;
@@ -272,6 +290,7 @@ export const useStore = create<State>((set, get) => ({
   secureForms: {},
   connectors: [],
   connectAppsOpen: false,
+  viewer: null,
   notifications: [],
   settingsOpen: false,
   settingsPane: null,
@@ -664,6 +683,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setConnectAppsOpen: (v) => set({ connectAppsOpen: v, ...(v ? { mobileSidebarOpen: false } : {}) }),
+  openViewer: (t) => set({ viewer: t, mobileSidebarOpen: false }),
+  closeViewer: () => set({ viewer: null }),
 
   wsSend: () => {
     /* replaced by App once the events socket exists */

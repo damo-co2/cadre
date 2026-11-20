@@ -1,8 +1,8 @@
 import { memo, useState } from "react";
-import { ArrowRightLeft, ChevronRight, ClipboardList, Download, ExternalLink, FileText, GraduationCap, Hand, Loader2, Pin, Repeat, Reply, UserMinus, UserPlus, Wrench } from "lucide-react";
+import { ArrowRightLeft, ChevronRight, ClipboardList, Download, ExternalLink, Eye, FileText, GraduationCap, Hand, Loader2, Pin, Repeat, Reply, UserMinus, UserPlus, Wrench } from "lucide-react";
 import type { Attachment, Bot, Message, MessagePart, ReplyQuote } from "@grokbot/shared";
 import { commentaryParts, messageText, parseReply, plainPreview } from "@grokbot/shared";
-import { fileUrl, workspaceUrl } from "../lib/api";
+import { fileUrl, workspaceUrl, workspaceViewUrl } from "../lib/api";
 import { formatBytes, isImageFile } from "../lib/files";
 import { useStore } from "../lib/store";
 import { BotAvatar } from "./BotAvatar";
@@ -278,12 +278,14 @@ function Part({ part }: { part: MessagePart }) {
 /** Attachment cards under a message: images inline, everything else as a chip with a download link. */
 function Attachments({ items, align = "start" }: { items: Attachment[] | undefined; align?: "start" | "end" }) {
   const [failed, setFailed] = useState<Record<string, boolean>>({});
+  const openViewer = useStore((s) => s.openViewer);
   if (!items?.length) return null;
+  const view = (a: Attachment) => openViewer({ name: a.name, url: fileUrl(a.id), downloadUrl: fileUrl(a.id, true), size: a.size, mimeType: a.mimeType });
   return (
     <div className={`flex max-w-[85%] flex-wrap gap-1.5 md:max-w-[80%] ${align === "end" ? "justify-end" : ""}`}>
       {items.map((a) =>
         isImageFile(a.name, a.mimeType) && !failed[a.id] ? (
-          <button key={a.id} onClick={() => window.open(fileUrl(a.id), "_blank")} title={`${a.name} · ${formatBytes(a.size)}`} className="block overflow-hidden rounded-lg border border-line bg-sunken">
+          <button key={a.id} onClick={() => view(a)} title={`${a.name} · ${formatBytes(a.size)}`} className="block overflow-hidden rounded-lg border border-line bg-sunken">
             <img
               src={fileUrl(a.id)}
               alt={a.name}
@@ -296,9 +298,9 @@ function Attachments({ items, align = "start" }: { items: Attachment[] | undefin
         ) : (
           <div key={a.id} className="flex items-center gap-2 rounded-app border border-line bg-elev px-2.5 py-1.5 text-xs">
             <FileText size={13} className="shrink-0 text-muted" />
-            <span className="max-w-[220px] truncate font-medium" title={a.name}>
+            <button onClick={() => view(a)} className="max-w-[220px] truncate font-medium hover:text-accent" title={`Open ${a.name}`}>
               {a.name}
-            </span>
+            </button>
             <span className="text-muted">{formatBytes(a.size)}</span>
             <a href={fileUrl(a.id, true)} download={a.name} className="flex items-center gap-0.5 text-muted hover:text-fg" title="Download">
               <Download size={12} />
@@ -313,24 +315,27 @@ function Attachments({ items, align = "start" }: { items: Attachment[] | undefin
 /** Result card for a file the Bot produced in its workspace. */
 function FileCard({ part }: { part: Extract<MessagePart, { type: "file" }> }) {
   const image = isImageFile(part.name, part.mimeType);
+  const openViewer = useStore((s) => s.openViewer);
+  const view = () =>
+    openViewer({ name: part.name, url: workspaceUrl(part.path), downloadUrl: workspaceUrl(part.path, true), viewUrl: workspaceViewUrl(part.path), path: part.path, size: part.size, mimeType: part.mimeType });
   return (
     <div className="max-w-[420px] overflow-hidden rounded-app border border-line bg-elev">
       {image && (
-        <button onClick={() => window.open(workspaceUrl(part.path), "_blank")} className="block w-full border-b border-line bg-sunken">
+        <button onClick={view} className="block w-full border-b border-line bg-sunken">
           <img src={workspaceUrl(part.path)} alt={part.name} className="block max-h-[240px] w-full object-contain" loading="lazy" />
         </button>
       )}
       <div className="flex items-center gap-2.5 px-3 py-2">
         <FileText size={16} className="shrink-0 text-muted" />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[14px] font-medium">{part.name}</div>
+        <button onClick={view} className="min-w-0 flex-1 text-left" title="Open in Cadre">
+          <div className="truncate text-[14px] font-medium hover:text-accent">{part.name}</div>
           <div className="truncate font-mono text-[12.5px] text-muted" title={part.path}>
             {part.path}
             {part.size !== undefined ? ` · ${formatBytes(part.size)}` : ""}
           </div>
-        </div>
-        <button onClick={() => window.open(workspaceUrl(part.path), "_blank")} className="flex items-center gap-1 rounded-app border border-line px-2 py-1 text-[13px] hover:bg-sunken" title="Open in a new tab">
-          <ExternalLink size={11} /> Open
+        </button>
+        <button onClick={view} className="flex items-center gap-1 rounded-app border border-line px-2 py-1 text-[13px] hover:bg-sunken" title="Open in Cadre">
+          <Eye size={11} /> Open
         </button>
         <a href={workspaceUrl(part.path, true)} download={part.name} className="flex items-center gap-1 rounded-app border border-line px-2 py-1 text-[13px] hover:bg-sunken" title="Download">
           <Download size={11} /> Download

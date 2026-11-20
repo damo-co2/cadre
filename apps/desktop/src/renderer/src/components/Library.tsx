@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Download, FileText, Image as ImageIcon } from "lucide-react";
-import { fileUrl, workspaceUrl } from "../lib/api";
+import { fileUrl, workspaceUrl, workspaceViewUrl } from "../lib/api";
 import { formatBytes, isImageFile } from "../lib/files";
-import { useStore } from "../lib/store";
+import { useStore, type ViewerTarget } from "../lib/store";
 import { relativeTime } from "../lib/time";
 
 interface Entry {
@@ -12,6 +12,7 @@ interface Entry {
   at: string;
   image: boolean;
   open: string;
+  view: ViewerTarget;
   download: string;
 }
 
@@ -20,17 +21,27 @@ const PAGE = 12;
 /** Every attachment and produced file in the open conversation, newest first, grouped by when. */
 export function Library() {
   const messages = useStore((s) => s.messages);
+  const openViewer = useStore((s) => s.openViewer);
   const [limit, setLimit] = useState(PAGE);
 
   const entries = useMemo(() => {
     const out: Entry[] = [];
     for (const m of messages) {
       for (const a of m.attachments ?? []) {
-        out.push({ key: `a:${a.id}`, name: a.name, size: a.size, at: m.createdAt, image: isImageFile(a.name, a.mimeType), open: fileUrl(a.id), download: fileUrl(a.id, true) });
+        out.push({ key: `a:${a.id}`, name: a.name, size: a.size, at: m.createdAt, image: isImageFile(a.name, a.mimeType), open: fileUrl(a.id), download: fileUrl(a.id, true), view: { name: a.name, url: fileUrl(a.id), downloadUrl: fileUrl(a.id, true), size: a.size, mimeType: a.mimeType } });
       }
       for (const p of m.parts) {
         if (p.type !== "file") continue;
-        out.push({ key: `f:${m.id}:${p.path}`, name: p.name, size: p.size, at: m.updatedAt || m.createdAt, image: isImageFile(p.name, p.mimeType), open: workspaceUrl(p.path), download: workspaceUrl(p.path, true) });
+        out.push({
+          key: `f:${m.id}:${p.path}`,
+          name: p.name,
+          size: p.size,
+          at: m.updatedAt || m.createdAt,
+          image: isImageFile(p.name, p.mimeType),
+          open: workspaceUrl(p.path),
+          download: workspaceUrl(p.path, true),
+          view: { name: p.name, url: workspaceUrl(p.path), downloadUrl: workspaceUrl(p.path, true), viewUrl: workspaceViewUrl(p.path), path: p.path, size: p.size, mimeType: p.mimeType },
+        });
       }
     }
     return out.sort((a, b) => b.at.localeCompare(a.at));
@@ -50,7 +61,7 @@ export function Library() {
             {list.map((e) => (
               <div key={e.key} className="flex items-center gap-2 rounded-app px-1.5 py-1 text-[13.5px] hover:bg-sunken/60">
                 {e.image ? <ImageIcon size={13} className="shrink-0 text-muted" /> : <FileText size={13} className="shrink-0 text-muted" />}
-                <button onClick={() => window.open(e.open, "_blank")} className="min-w-0 flex-1 truncate text-left hover:text-accent" title={e.name}>
+                <button onClick={() => openViewer(e.view)} className="min-w-0 flex-1 truncate text-left hover:text-accent" title={`Open ${e.name}`}>
                   {e.name}
                 </button>
                 <span className="shrink-0 text-[12.5px] text-muted">{relativeTime(e.at)}</span>

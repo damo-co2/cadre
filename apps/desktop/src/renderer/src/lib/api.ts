@@ -51,6 +51,11 @@ export function fileUrl(id: string, download = false): string {
   return `${SERVER_URL}/api/files/${encodeURIComponent(id)}${download ? "?download=1" : ""}`;
 }
 
+/** The same workspace file at a folder-like URL, so an HTML page finds the files next to it (in-app viewer). */
+export function workspaceViewUrl(path: string): string {
+  return `${SERVER_URL}/api/workspace/view/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 /** Direct URL for a file in the Bot's workspace, by relative path. */
 export function workspaceUrl(path: string, download = false): string {
   return `${SERVER_URL}/api/workspace?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;

@@ -10,6 +10,7 @@ import { CreateBotDialog } from "./components/CreateBotDialog";
 import { NewChatDialog } from "./components/NewChatDialog";
 import { ConnectAppsDialog } from "./components/ConnectAppsDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { FileViewer } from "./components/FileViewer";
 import { Welcome } from "./components/Welcome";
 import { AskDialog } from "./components/AskDialog";
 import { LearnedChip } from "./components/LearnedChip";
@@ -177,6 +178,7 @@ export default function App() {
       <LearnedChip />
       {connectAppsOpen && <ConnectAppsDialog />}
       <AskDialog />
+      <FileViewer />
     </div>
   );
 }
