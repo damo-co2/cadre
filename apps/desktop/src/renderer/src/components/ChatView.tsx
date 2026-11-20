@@ -33,7 +33,8 @@ export function ChatView() {
   const approvals = useStore((s) => s.approvals);
   const secureForms = useStore((s) => s.secureForms);
   const bots = useStore((s) => s.bots);
-  const selectBot = useStore((s) => s.selectBot);
+  const openChat = useStore((s) => s.openChat);
+  const groups = useStore((s) => s.groups);
   const skills = useStore((s) => s.skills);
   const replyTo = useStore((s) => s.replyTo);
   const setReplyTo = useStore((s) => s.setReplyTo);
@@ -169,17 +170,26 @@ export function ChatView() {
   }, [conversation?.id]);
 
   // Pending approvals and Secure Forms that belong to OTHER conversations: surfaced as a strip above the composer.
+  // One chip per Bot and chat, and a click opens the chat the request is waiting in (a group, or the Bot's own chat).
   const elsewhere = useMemo(() => {
-    const byBot = new Map<string, number>();
+    const byChat = new Map<string, { botId: string; conversationId: string; count: number }>();
     const pending = [...Object.values(approvals), ...Object.values(secureForms)];
     for (const a of pending) {
       if (a.status !== "pending" || a.conversationId === conversation?.id) continue;
-      byBot.set(a.botId, (byBot.get(a.botId) ?? 0) + 1);
+      const key = `${a.botId}:${a.conversationId}`;
+      const e = byChat.get(key) ?? { botId: a.botId, conversationId: a.conversationId, count: 0 };
+      e.count += 1;
+      byChat.set(key, e);
     }
-    return [...byBot.entries()]
-      .map(([botId, count]) => ({ botId, count, name: bots.find((b) => b.id === botId)?.name ?? "Bot" }))
+    return [...byChat.entries()]
+      .map(([key, e]) => {
+        const name = bots.find((b) => b.id === e.botId)?.name ?? "Bot";
+        const group = groups.find((g) => g.id === e.conversationId);
+        const where = group ? groupTitle(group.title, group.botIds.map((id) => bots.find((b) => b.id === id)).filter((b): b is Bot => Boolean(b))) : null;
+        return { ...e, key, name, where };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [approvals, secureForms, bots, conversation?.id]);
+  }, [approvals, secureForms, bots, groups, conversation?.id]);
   const elsewhereCount = elsewhere.reduce((n, e) => n + e.count, 0);
   const reports = useMemo(() => bots.filter((b) => !b.hidden && !b.isPrimary), [bots]);
   const waitingOnYou = tasks.filter((t) => t.ownerBotId === null).length;
@@ -379,12 +389,13 @@ export function ChatView() {
               <span className="text-muted">·</span>
               {elsewhere.map((e) => (
                 <button
-                  key={e.botId}
-                  onClick={() => void selectBot(e.botId)}
+                  key={e.key}
+                  onClick={() => void openChat(e.conversationId, e.botId)}
                   className="rounded-md bg-elev px-1.5 py-0.5 font-medium hover:text-accent"
-                  title={`Open ${e.name}`}
+                  title={e.where ? `Open the group chat "${e.where}"` : `Open ${e.name}`}
                 >
                   {e.name}
+                  {e.where && <span className="ml-1 font-normal text-muted">in {e.where}</span>}
                   {e.count > 1 && <span className="ml-1 text-muted">×{e.count}</span>}
                 </button>
               ))}

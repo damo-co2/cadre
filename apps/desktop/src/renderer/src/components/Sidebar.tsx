@@ -58,16 +58,22 @@ export function Sidebar() {
     return { lead, pinned, sections: [...sections.entries()].sort(([a], [b]) => a.localeCompare(b)), hidden: bots.filter((b) => b.hidden) };
   }, [bots]);
 
-  const pendingBots = useMemo(() => {
-    const set = new Set<string>();
-    for (const a of Object.values(approvals)) if (a.status === "pending") set.add(a.botId);
-    for (const f of Object.values(secureForms)) if (f.status === "pending") set.add(f.botId);
-    return set;
-  }, [approvals, secureForms]);
+  // Flag the chat the request is waiting in: a group's request lights up the group, not the Bot's own chat.
+  const { pendingBots, pendingGroups } = useMemo(() => {
+    const groupIds = new Set(allGroups.map((g) => g.id));
+    const pendingBots = new Set<string>();
+    const pendingGroups = new Set<string>();
+    for (const a of [...Object.values(approvals), ...Object.values(secureForms)]) {
+      if (a.status !== "pending") continue;
+      if (groupIds.has(a.conversationId)) pendingGroups.add(a.conversationId);
+      else pendingBots.add(a.botId);
+    }
+    return { pendingBots, pendingGroups };
+  }, [approvals, secureForms, allGroups]);
 
   const row = (b: Bot) => {
     const raw = botStatus[b.id] ?? "idle";
-    const status = pendingBots.has(b.id) ? "needs-attention" : raw;
+    const status = pendingBots.has(b.id) ? "needs-attention" : raw === "needs-attention" ? "working" : raw;
     const active = b.id === selectedBotId;
     return (
       <button
@@ -117,6 +123,7 @@ export function Sidebar() {
   const groupRow = (g: Conversation) => {
     const members = g.botIds.map((id) => bots.find((b) => b.id === id)).filter((b): b is Bot => Boolean(b));
     const active = g.id === selectedConversationId && !selectedBotId;
+    const attention = pendingGroups.has(g.id);
     return (
       <button
         key={g.id}
@@ -127,13 +134,16 @@ export function Sidebar() {
         }}
         className={`no-drag flex w-full items-center gap-2.5 rounded-[10px] px-2 py-2 text-left transition-colors ${active ? "bg-elev shadow-tide" : "hover:bg-elev/60"}`}
       >
-        <div className="flex w-[30px] shrink-0 justify-center overflow-hidden">
-          <AvatarStack bots={members} size={18} max={2} />
+        <div className="relative flex w-[30px] shrink-0 justify-center">
+          <div className="flex w-full justify-center overflow-hidden">
+            <AvatarStack bots={members} size={18} max={2} />
+          </div>
+          {attention && <span className="absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-sunken bg-signal" />}
         </div>
         <div className="min-w-0 flex-1">
           <div className={`truncate text-[14.5px] ${active ? "font-semibold" : "font-medium"}`}>{groupTitle(g.title, members)}</div>
           <div className="truncate text-[12.5px] text-muted">
-            {members.length} Bot{members.length === 1 ? "" : "s"}
+            {attention ? <span className="text-signal">Needs attention</span> : `${members.length} Bot${members.length === 1 ? "" : "s"}`}
           </div>
         </div>
         {unread[g.id] && !active && <span className="h-2 w-2 rounded-full bg-accent" />}
