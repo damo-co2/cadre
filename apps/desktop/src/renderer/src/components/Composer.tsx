@@ -47,6 +47,10 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [pickerClosed, setPickerClosed] = useState(false);
+  /** Caret position, so an @mention typed mid-sentence opens the picker too. */
+  const [caret, setCaret] = useState(0);
+  /** Where the @mention the user dismissed with Escape starts; typing a new @ elsewhere opens it again. */
+  const [closedAt, setClosedAt] = useState<number | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -63,28 +67,53 @@ export function Composer({
 
   useEffect(() => ref.current?.focus(), [botName, replyTo]);
 
-  // "/" or "@" typed at the very start of an otherwise empty composer opens the picker; it closes on space, Escape or insert.
+  // "/" at the very start of the box opens the skills picker. "@" opens the Bot picker anywhere: at the start or
+  // after a space, mid-sentence included. It closes on Escape, on insert, or once what you typed matches no name.
   const picker = useMemo(() => {
-    const trigger = text[0];
-    if ((trigger !== "/" && trigger !== "@") || pickerClosed || /\s/.test(text)) return null;
-    const q = text.slice(1).toLowerCase();
-    const items: PickerItem[] =
-      trigger === "/"
-        ? skills
-            .filter((k) => k.name.toLowerCase().includes(q) || k.description.toLowerCase().includes(q))
-            .map((k) => ({ key: k.id, title: `/${k.name}`, subtitle: k.description, insert: `Use the skill ${k.name}: ` }))
-        : mentions
-            .filter((m) => m.name.toLowerCase().includes(q))
-            .map((m) => ({ key: m.id, title: `@${m.name}`, subtitle: m.label ?? "Bot", insert: `@${m.name} ` }));
-    return { kind: trigger, items };
-  }, [text, skills, mentions, pickerClosed]);
+    if (text[0] === "/" && !pickerClosed && !/\s/.test(text)) {
+      const q = text.slice(1).toLowerCase();
+      const items: PickerItem[] = skills
+        .filter((k) => k.name.toLowerCase().includes(q) || k.description.toLowerCase().includes(q))
+        .map((k) => ({ key: k.id, title: `/${k.name}`, subtitle: k.description, insert: `Use the skill ${k.name}: ` }));
+      return { kind: "/" as const, items, from: 0 };
+    }
+    const at = mentionAt(text, caret);
+    if (!at || at.from === closedAt) return null;
+    const q = at.query.toLowerCase();
+    // A space only keeps it open while it is still part of a name ("@Platform In").
+    if (/\s/.test(q) && !mentions.some((m) => m.name.toLowerCase().startsWith(q))) return null;
+    const items: PickerItem[] = mentions
+      .filter((m) => m.name.toLowerCase().includes(q))
+      .map((m) => ({ key: m.id, title: `@${m.name}`, subtitle: m.label ?? "Bot", insert: `@${m.name} ` }));
+    // Mid-sentence "@something" that is no Bot's name (a handle, "@ 5pm"): stay out of the way.
+    if (!items.length && (q || at.from > 0)) return null;
+    return { kind: "@" as const, items, from: at.from };
+  }, [text, caret, skills, mentions, pickerClosed, closedAt]);
 
   useEffect(() => setCursor(0), [picker?.items.length, picker?.kind]);
   useEffect(() => {
-    if (!text) setPickerClosed(false);
+    if (!text) {
+      setPickerClosed(false);
+      setClosedAt(null);
+    }
   }, [text]);
 
   const choose = (item: PickerItem) => {
+    if (picker?.kind === "@") {
+      // Replace just the "@que" being typed, keeping the rest of the sentence around it.
+      const before = text.slice(0, picker.from);
+      const after = text.slice(caret).replace(/^ /, "");
+      const next = before + item.insert + after;
+      const pos = before.length + item.insert.length;
+      setText(next);
+      setCaret(pos);
+      setClosedAt(picker.from);
+      requestAnimationFrame(() => {
+        ref.current?.focus();
+        ref.current?.setSelectionRange(pos, pos);
+      });
+      return;
+    }
     setText(item.insert);
     setPickerClosed(true);
     requestAnimationFrame(() => ref.current?.focus());
@@ -145,7 +174,8 @@ export function Composer({
     }
     if (picker && e.key === "Escape") {
       e.preventDefault();
-      setPickerClosed(true);
+      if (picker.kind === "@") setClosedAt(picker.from);
+      else setPickerClosed(true);
       return;
     }
     if (replyTo && e.key === "Escape") {
@@ -239,7 +269,11 @@ export function Composer({
         <textarea
           ref={ref}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setCaret(e.target.selectionStart ?? e.target.value.length);
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           placeholder={dragging ? "Drop files to attach" : (placeholder ?? `Message ${botName}…  (@ to mention, / for skills)`)}
@@ -304,4 +338,13 @@ function IconButton({ title, children, onClick }: { title: string; children: Rea
       {children}
     </button>
   );
+}
+
+/** The "@query" the caret is in, if it starts the box or follows a space or bracket (not an email address). */
+export function mentionAt(text: string, caret: number): { from: number; query: string } | null {
+  const head = text.slice(0, caret);
+  const m = /(^|[\s([{"'])@([^@\n]*)$/.exec(head);
+  if (!m) return null;
+  const from = m.index + m[1]!.length;
+  return { from, query: m[2]! };
 }

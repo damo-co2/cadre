@@ -314,17 +314,24 @@ export const updateConversationSchema = z.object({
   botIds: z.array(z.string()).min(MIN_GROUP_BOTS).max(MAX_GROUP_BOTS).optional(),
 });
 
-/** Parses @Name mentions (case-insensitive; names may contain spaces when quoted) and @everyone. */
+/**
+ * Parses @Name mentions and @everyone, anywhere in the text ("I need @everyone to look", "ask @Monay too").
+ * Case-insensitive; names may contain spaces. The @ must start the text or follow a space or punctuation,
+ * and the name must end there, so "bob@monay.com" or "@Monaya" don't count.
+ */
 export function parseMentions(text: string, names: string[]): { mentioned: string[]; everyone: boolean } {
-  const everyone = /(^|\s)@everyone\b/i.test(text);
   const lower = text.toLowerCase();
-  const mentioned = names.filter((n) => {
-    const needle = `@${n.toLowerCase()}`;
-    const i = lower.indexOf(needle);
-    if (i < 0) return false;
-    const after = lower[i + needle.length];
-    return after === undefined || !/[a-z0-9_]/.test(after);
-  });
+  const at = (word: string): boolean => {
+    const needle = `@${word.toLowerCase()}`;
+    for (let i = lower.indexOf(needle); i >= 0; i = lower.indexOf(needle, i + 1)) {
+      const before = i === 0 ? "" : lower[i - 1]!;
+      const after = lower[i + needle.length];
+      if ((before === "" || !/[\p{L}\p{N}_@]/u.test(before)) && (after === undefined || !/[\p{L}\p{N}_]/u.test(after))) return true;
+    }
+    return false;
+  };
+  const everyone = at("everyone");
+  const mentioned = names.filter((n) => at(n));
   return { mentioned, everyone };
 }
 
