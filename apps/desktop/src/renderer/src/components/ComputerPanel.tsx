@@ -255,7 +255,7 @@ export function ComputerPanel({
   };
 
   return (
-    <aside className={expanded ? "fixed inset-0 z-40 flex flex-col bg-bg" : "flex h-full w-full shrink-0 flex-col border-l border-line bg-sunken/40 md:w-[420px]"}>
+    <aside className={expanded ? "fixed inset-0 z-40 flex flex-col bg-bg" : "flex h-full w-full min-w-0 flex-col border-l border-line bg-sunken/40"}>
       <div className={`drag flex h-[52px] items-center justify-between gap-2 border-b border-line px-3 ${expanded && window.cadre?.platform === "darwin" ? "pl-[84px]" : ""}`}>
         <div className="flex min-w-0 items-center gap-2">
           {members && members.length > 1 && onPickBot ? (

@@ -15,7 +15,7 @@ import { BotAvatar } from "./BotAvatar";
 export function TeamPanel({ bot, onClose, onOpenComputer, fullScreen = false }: { bot: Bot | null; onClose: () => void; onOpenComputer?: () => void; fullScreen?: boolean }) {
   return (
     <aside
-      className={`no-drag flex shrink-0 flex-col gap-5 overflow-y-auto bg-sunken p-4 ${fullScreen ? "h-full w-full pt-[max(1rem,env(safe-area-inset-top))]" : "w-[300px] border-l border-line"}`}
+      className={`no-drag flex shrink-0 flex-col gap-5 overflow-y-auto bg-sunken p-4 ${fullScreen ? "h-full w-full pt-[max(1rem,env(safe-area-inset-top))]" : "h-full w-full min-w-0 border-l border-line"}`}
     >
       <div className="flex items-center justify-between">
         <span className="font-serif text-[22px] leading-none">Team pulse</span>

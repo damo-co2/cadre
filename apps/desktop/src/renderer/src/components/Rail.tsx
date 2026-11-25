@@ -1,4 +1,4 @@
-import { LayoutGrid, MessagesSquare, Moon, Plug, Settings, Sparkles, Sun, Users } from "lucide-react";
+import { LayoutGrid, MessagesSquare, Moon, PanelLeftOpen, Plug, Settings, Sparkles, Sun, Users } from "lucide-react";
 import { useMemo } from "react";
 import { botsInSpace, useStore } from "../lib/store";
 
@@ -8,6 +8,8 @@ import { botsInSpace, useStore } from "../lib/store";
  */
 export function Rail() {
   const allBots = useStore((s) => s.bots);
+  const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
+  const setSidebarCollapsed = useStore((s) => s.setSidebarCollapsed);
   const spaceId = useStore((s) => s.spaceId);
   const spaces = useStore((s) => s.spaces);
   const setSpace = useStore((s) => s.setSpace);
@@ -35,6 +37,11 @@ export function Rail() {
   return (
     <nav className="drag flex h-full w-16 shrink-0 flex-col items-center gap-1.5 border-r border-line bg-rail pb-4 pt-12">
       <div className="tide-mark no-drag mb-3 h-[30px] w-[30px]" title="Cadre" />
+      {sidebarCollapsed && (
+        <RailButton title="Show sidebar (⌘\\)" onClick={() => setSidebarCollapsed(false)}>
+          <PanelLeftOpen size={17} />
+        </RailButton>
+      )}
       {spaces.length > 1 && (
         <div className="no-drag mb-3 flex flex-col items-center gap-1 border-b border-line pb-3">
           {spaces.map((x) => (

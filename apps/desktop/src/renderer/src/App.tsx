@@ -11,6 +11,7 @@ import { NewChatDialog } from "./components/NewChatDialog";
 import { ConnectAppsDialog } from "./components/ConnectAppsDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { FileViewer } from "./components/FileViewer";
+import { ResizablePanel } from "./components/ResizablePanel";
 import { Welcome } from "./components/Welcome";
 import { AskDialog } from "./components/AskDialog";
 import { LearnedChip } from "./components/LearnedChip";
@@ -35,6 +36,8 @@ export default function App() {
   const setNewChatOpen = useStore((s) => s.setNewChatOpen);
   const setSettingsOpen = useStore((s) => s.setSettingsOpen);
   const mobileSidebarOpen = useStore((s) => s.mobileSidebarOpen);
+  const sidebarCollapsed = useStore((s) => s.sidebarCollapsed);
+  const setSidebarCollapsed = useStore((s) => s.setSidebarCollapsed);
   const setMobileSidebarOpen = useStore((s) => s.setMobileSidebarOpen);
   const isMobile = useMediaQuery(MOBILE_QUERY);
   // No Electron bridge: served to a browser (phone or web). Drops the title-bar strip and drag regions.
@@ -114,6 +117,11 @@ export default function App() {
         if (e.shiftKey) setNewChatOpen(true);
         else setCreateOpen(true);
       }
+      if (mod && e.key === "\\") {
+        e.preventDefault();
+        const st = useStore.getState();
+        st.setSidebarCollapsed(!st.sidebarCollapsed);
+      }
       if (mod && e.key === ",") {
         e.preventDefault();
         setSettingsOpen(true);
@@ -152,10 +160,14 @@ export default function App() {
       ) : (
         <>
           <Rail />
-          <Sidebar />
+          {!sidebarCollapsed && (
+            <ResizablePanel side="left" storageKey="sidebar" defaultWidth={244} min={200} max={420} onCollapse={() => setSidebarCollapsed(true)}>
+              <Sidebar />
+            </ResizablePanel>
+          )}
         </>
       )}
-      <main className="flex min-w-0 flex-1 flex-col bg-bg">
+      <main className="flex min-w-0 flex-1 flex-col bg-bg md:min-w-auto">
         {!connected ? (
           <div className="drag flex h-full items-center justify-center text-muted">
             <div className="no-drag text-center">

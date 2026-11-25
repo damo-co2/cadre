@@ -99,6 +99,8 @@ interface State {
   connectAppsOpen: boolean;
   /** The file shown in the in-app viewer, if any. */
   viewer: ViewerTarget | null;
+  /** Desktop: the conversation list is folded away (the rail stays). */
+  sidebarCollapsed: boolean;
   /** Recent "notify" events for conversations that were not open at the time (newest first). */
   notifications: AppNotification[];
   settingsOpen: boolean;
@@ -204,6 +206,7 @@ interface State {
   cancelSecureForm(id: string): Promise<void>;
   setConnectAppsOpen(v: boolean): void;
   openViewer(t: ViewerTarget): void;
+  setSidebarCollapsed(v: boolean): void;
   closeViewer(): void;
   /** Send a ClientMessage over the events WebSocket. Set by App from connectEvents. */
   wsSend(msg: ClientMessage): void;
@@ -291,6 +294,13 @@ export const useStore = create<State>((set, get) => ({
   connectors: [],
   connectAppsOpen: false,
   viewer: null,
+  sidebarCollapsed: (() => {
+    try {
+      return localStorage.getItem("cadre.sidebarCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  })(),
   notifications: [],
   settingsOpen: false,
   settingsPane: null,
@@ -684,6 +694,14 @@ export const useStore = create<State>((set, get) => ({
 
   setConnectAppsOpen: (v) => set({ connectAppsOpen: v, ...(v ? { mobileSidebarOpen: false } : {}) }),
   openViewer: (t) => set({ viewer: t, mobileSidebarOpen: false }),
+  setSidebarCollapsed: (v) => {
+    try {
+      localStorage.setItem("cadre.sidebarCollapsed", v ? "1" : "0");
+    } catch {
+      /* not remembered in a private window */
+    }
+    set({ sidebarCollapsed: v });
+  },
   closeViewer: () => set({ viewer: null }),
 
   wsSend: () => {

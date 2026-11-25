@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus, Settings, Plug, Pin, EyeOff, Eye, ChevronDown, ChevronRight, Bot as BotIcon, MessagesSquare, Pencil, Trash2, X, Sun, Moon, LayoutGrid } from "lucide-react";
+import { PanelLeftClose, Plus, Settings, Plug, Pin, EyeOff, Eye, ChevronDown, ChevronRight, Bot as BotIcon, MessagesSquare, Pencil, Trash2, X, Sun, Moon, LayoutGrid } from "lucide-react";
 import type { Bot, Conversation } from "@grokbot/shared";
 import { botsInSpace, useStore } from "../lib/store";
 import { askText } from "../lib/ask";
@@ -35,6 +35,7 @@ export function Sidebar() {
   const setSettingsOpen = useStore((s) => s.setSettingsOpen);
   const setConnectAppsOpen = useStore((s) => s.setConnectAppsOpen);
   const setMobileSidebarOpen = useStore((s) => s.setMobileSidebarOpen);
+  const setSidebarCollapsed = useStore((s) => s.setSidebarCollapsed);
   const [showHidden, setShowHidden] = useState(false);
   const [plusMenu, setPlusMenu] = useState<{ x: number; y: number } | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -152,7 +153,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="drag flex h-full w-full shrink-0 flex-col border-r border-line bg-sunken md:w-[244px]">
+    <aside className="drag flex h-full w-full min-w-0 flex-col border-r border-line bg-sunken">
       <div className="sidebar-head flex items-end gap-1 px-4 pb-3 pt-5">
         <button
           onClick={() => setMobileSidebarOpen(false)}
@@ -176,6 +177,13 @@ export function Sidebar() {
           className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-elev hover:text-fg"
         >
           <Plus size={16} />
+        </button>
+        <button
+          onClick={() => setSidebarCollapsed(true)}
+          title="Hide sidebar (⌘\\)"
+          className="no-drag hidden h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-elev hover:text-fg md:flex"
+        >
+          <PanelLeftClose size={16} />
         </button>
       </div>
 

@@ -14,6 +14,7 @@ import { MessageBubble } from "./MessageBubble";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { ComputerPanel } from "./ComputerPanel";
 import { TeamPanel } from "./TeamPanel";
+import { ResizablePanel } from "./ResizablePanel";
 
 const STARTERS = [
   { title: "Morning briefing", prompt: "Every morning, give me a short briefing: my calendar for the day, urgent emails, and anything I promised people." },
@@ -223,9 +224,10 @@ export function ChatView() {
   if (isGroup) mentions.unshift({ id: "everyone", name: "everyone", label: "All Bots in this chat" });
 
   return (
-    <div className="flex h-full min-w-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="drag relative flex h-[56px] shrink-0 items-center justify-between gap-2 border-b border-line px-2 md:h-[64px] md:px-5">
+    <div className="flex h-full min-w-0 flex-1 md:min-w-auto">
+      <div className="flex min-w-0 flex-1 flex-col md:min-w-[360px]">
+        {/* Sized by the chat column, not the window: with side panels open the labels fold away instead of spilling over them. */}
+        <header className="drag @container relative flex h-[56px] min-w-0 shrink-0 items-center justify-between gap-2 border-b border-line px-2 [overflow-x:clip] md:h-[64px] md:px-5">
           <button
             onClick={() => setMobileSidebarOpen(true)}
             className="no-drag mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted hover:bg-elev hover:text-fg md:hidden"
@@ -244,8 +246,8 @@ export function ChatView() {
               <BotAvatar name={bot!.name} color={bot!.avatarColor} shape={bot!.avatarShape} image={bot!.avatarImage} size={30} className="md:hidden" />
             )}
             <div className="flex min-w-0 items-baseline gap-2.5 text-left">
-              <span className="max-w-[170px] truncate font-serif text-[22px] leading-tight sm:max-w-[360px] md:text-[26px]">{title}</span>
-              <span className="hidden truncate text-[13.5px] text-muted sm:inline">
+              <span className="max-w-[170px] truncate font-serif text-[22px] leading-tight @min-[520px]:max-w-[360px] md:text-[26px]">{title}</span>
+              <span className="hidden truncate text-[13.5px] text-muted @min-[620px]:inline">
                 {isGroup
                   ? `${members.length} Bot${members.length === 1 ? "" : "s"}`
                   : status === "working"
@@ -256,7 +258,7 @@ export function ChatView() {
             </div>
           </button>
           {!isGroup && bot!.isPrimary && reports.length > 0 && (
-            <div className="no-drag ml-auto hidden items-center lg:flex" title={reports.map((b) => b.name).join(", ")}>
+            <div className="no-drag ml-auto hidden items-center @min-[820px]:flex" title={reports.map((b) => b.name).join(", ")}>
               {reports.slice(0, 5).map((b) => (
                 <BotAvatar key={b.id} name={b.name} color={b.avatarColor} shape={b.avatarShape} image={b.avatarImage} size={24} className="-ml-1.5 ring-2 ring-bg" />
               ))}
@@ -265,6 +267,7 @@ export function ChatView() {
               </span>
             </div>
           )}
+          <div className="no-drag ml-auto flex shrink-0 items-center gap-1 md:gap-2">
           <button
             onClick={() => void setAutoMode(!autoMode)}
             className={`no-drag flex shrink-0 items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-[13.5px] ${autoMode ? "bg-elev text-accent" : "text-muted hover:bg-elev"}`}
@@ -275,7 +278,7 @@ export function ChatView() {
             }
           >
             <Zap size={14} className={autoMode ? "fill-current" : ""} />
-            <span className="hidden sm:inline">Auto</span>
+            <span className="hidden @min-[560px]:inline">Auto</span>
           </button>
           <NotificationsMenu />
           {(!isGroup || members.length > 0) && (
@@ -285,7 +288,7 @@ export function ChatView() {
               title={isGroup ? "See a Bot's screen in this group" : "Open computer"}
             >
               <Monitor size={14} />
-              <span className="hidden sm:inline">Computer</span>
+              <span className="hidden @min-[560px]:inline">Computer</span>
             </button>
           )}
           <button
@@ -294,9 +297,10 @@ export function ChatView() {
             title="Team pulse: live screen, task board, next routines"
           >
             <LayoutGrid size={14} />
-            <span className="hidden sm:inline">Pulse</span>
+            <span className="hidden @min-[560px]:inline">Pulse</span>
             {waitingOnYou > 0 && <span className="h-1.5 w-1.5 rounded-full bg-signal" />}
           </button>
+          </div>
           {detailsOpen &&
             (isGroup ? (
               <GroupDetails group={conversation} members={members} onClose={() => setDetailsOpen(false)} />
@@ -424,17 +428,31 @@ export function ChatView() {
             <ComputerPanel bot={screenBot} onClose={closeComputer} members={isGroup ? members : undefined} onPickBot={setScreenBotId} />
           </div>
         ) : (
-          <ComputerPanel
-            bot={screenBot}
-            onClose={closeComputer}
-            expanded={screenExpanded}
-            onToggleExpand={() => setScreenExpanded((v) => !v)}
-            members={isGroup ? members : undefined}
-            onPickBot={setScreenBotId}
-          />
+          screenExpanded ? (
+            <ComputerPanel
+              bot={screenBot}
+              onClose={closeComputer}
+              expanded
+              onToggleExpand={() => setScreenExpanded((v) => !v)}
+              members={isGroup ? members : undefined}
+              onPickBot={setScreenBotId}
+            />
+          ) : (
+            <ResizablePanel side="right" storageKey="computer" defaultWidth={420} min={320} max={900} onCollapse={closeComputer}>
+              <ComputerPanel
+                bot={screenBot}
+                onClose={closeComputer}
+                onToggleExpand={() => setScreenExpanded((v) => !v)}
+                members={isGroup ? members : undefined}
+                onPickBot={setScreenBotId}
+              />
+            </ResizablePanel>
+          )
         ))}
       {!isMobile && (rightPanel === "team" || (rightPanel === "computer" && !screenBot)) && (
-        <TeamPanel bot={panelBot} onClose={() => setRightPanel(null)} onOpenComputer={openScreen(true)} />
+        <ResizablePanel side="right" storageKey="pulse" defaultWidth={300} min={260} max={640} onCollapse={() => setRightPanel(null)}>
+          <TeamPanel bot={panelBot} onClose={() => setRightPanel(null)} onOpenComputer={openScreen(true)} />
+        </ResizablePanel>
       )}
       {isMobile && mobileTeamOpen && (
         <div className="fixed inset-0 z-30 bg-sunken">
