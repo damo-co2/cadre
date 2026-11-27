@@ -28,6 +28,7 @@ import { tasksRoutes } from "./routes/tasks.js";
 import { pluginsRoutes } from "./routes/plugins.js";
 import { pullRequestsRoutes } from "./routes/pullRequests.js";
 import { pinsRoutes } from "./routes/pins.js";
+import { KeepAwake } from "./keepAwake.js";
 import { AccessManager, accessMiddleware, accessRoutes, rendererHandler } from "./access.js";
 import type { AppEnv } from "./context.js";
 
@@ -54,7 +55,10 @@ const sendTo = (ws: WsLike, event: ServerEvent) => {
     clients.delete(ws);
   }
 };
+// While any Bot is working, the computer doesn't go to sleep (the screen still can).
+const keepAwake = new KeepAwake();
 const emit = (event: ServerEvent) => {
+  keepAwake.onEvent(event);
   for (const ws of clients) sendTo(ws, event);
 };
 
@@ -225,6 +229,7 @@ const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
 injectWebSocket(server);
 
 const shutdown = () => {
+  keepAwake.stop();
   void runtime.shutdown();
   void computer.shutdown().finally(() => {
     store.close();
