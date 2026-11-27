@@ -15,6 +15,7 @@ import { NotificationsMenu } from "./NotificationsMenu";
 import { ComputerPanel } from "./ComputerPanel";
 import { TeamPanel } from "./TeamPanel";
 import { ResizablePanel } from "./ResizablePanel";
+import { WorkingStrip } from "./WorkingStrip";
 
 const STARTERS = [
   { title: "Morning briefing", prompt: "Every morning, give me a short briefing: my calendar for the day, urgent emails, and anything I promised people." },
@@ -34,7 +35,7 @@ export function ChatView() {
   const approvals = useStore((s) => s.approvals);
   const secureForms = useStore((s) => s.secureForms);
   const bots = useStore((s) => s.bots);
-  const openChat = useStore((s) => s.openChat);
+  const openRequest = useStore((s) => s.openRequest);
   const groups = useStore((s) => s.groups);
   const skills = useStore((s) => s.skills);
   const replyTo = useStore((s) => s.replyTo);
@@ -100,6 +101,8 @@ export function ChatView() {
   // height (content-visibility), so after the jump they render at their real height and the page grows
   // under the reader: while stuck, every change in the page's height scrolls back to the bottom.
   const stick = useRef(true);
+  /** A message just jumped to: hold it in view while the messages around it render at their real height. */
+  const anchor = useRef<{ id: string; until: number } | null>(null);
   const content = useRef<HTMLDivElement>(null);
   const conversationKey = conversation?.id;
   useEffect(() => {
@@ -107,6 +110,12 @@ export function ChatView() {
     const el = scroller.current;
     if (!inner || !el) return;
     const ro = new ResizeObserver(() => {
+      const a = anchor.current;
+      if (a && Date.now() < a.until) {
+        document.getElementById(`msg-${a.id}`)?.scrollIntoView({ block: "center" });
+        return;
+      }
+      anchor.current = null;
       if (stick.current && keepFromBottom.current === null) el.scrollTop = el.scrollHeight;
     });
     ro.observe(inner);
@@ -161,6 +170,7 @@ export function ChatView() {
     useStore.setState({ focusMessageId: null });
     stick.current = false; // reading an older message: don't snap back to the bottom
     el.scrollIntoView({ block: "center" });
+    anchor.current = { id: target!.id, until: Date.now() + 1500 };
     setFlashId(target!.id);
     clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlashId(null), 1800);
@@ -170,15 +180,22 @@ export function ChatView() {
     setDetailsOpen(false);
   }, [conversation?.id]);
 
-  // Pending approvals and Secure Forms that belong to OTHER conversations: surfaced as a strip above the composer.
-  // One chip per Bot and chat, and a click opens the chat the request is waiting in (a group, or the Bot's own chat).
+  // Re-check expiry every 30s so a request that timed out drops off the bar.
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setClock(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  // Pending approvals and Secure Forms, here and in other chats: surfaced as a strip above the composer. One chip per
+  // Bot and chat; a click opens the chat the request is waiting in and scrolls to its card. Expired ones aren't shown.
   const elsewhere = useMemo(() => {
-    const byChat = new Map<string, { botId: string; conversationId: string; count: number }>();
+    const byChat = new Map<string, { botId: string; conversationId: string; messageId: string; what: string; count: number }>();
     const pending = [...Object.values(approvals), ...Object.values(secureForms)];
     for (const a of pending) {
-      if (a.status !== "pending" || a.conversationId === conversation?.id) continue;
+      if (a.status !== "pending" || Date.parse(a.expiresAt) <= clock) continue;
       const key = `${a.botId}:${a.conversationId}`;
-      const e = byChat.get(key) ?? { botId: a.botId, conversationId: a.conversationId, count: 0 };
+      const what = "summary" in a ? a.summary : `Needs: ${a.label}`;
+      const e = byChat.get(key) ?? { botId: a.botId, conversationId: a.conversationId, messageId: a.messageId, what, count: 0 };
       e.count += 1;
       byChat.set(key, e);
     }
@@ -186,11 +203,14 @@ export function ChatView() {
       .map(([key, e]) => {
         const name = bots.find((b) => b.id === e.botId)?.name ?? "Bot";
         const group = groups.find((g) => g.id === e.conversationId);
-        const where = group ? groupTitle(group.title, group.botIds.map((id) => bots.find((b) => b.id === id)).filter((b): b is Bot => Boolean(b))) : null;
-        return { ...e, key, name, where };
+        const here = e.conversationId === conversation?.id;
+        const groupName = group ? groupTitle(group.title, group.botIds.map((id) => bots.find((b) => b.id === id)).filter((b): b is Bot => Boolean(b))) : null;
+        // Always say where it is waiting: here, a group chat, or the Bot's own chat.
+        const where = here ? "here" : groupName ? `in group "${groupName}"` : "in its own chat";
+        return { ...e, key, name, where, groupName, here };
       })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [approvals, secureForms, bots, groups, conversation?.id]);
+      .sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name));
+  }, [approvals, secureForms, bots, groups, conversation?.id, clock]);
   const elsewhereCount = elsewhere.reduce((n, e) => n + e.count, 0);
   const reports = useMemo(() => bots.filter((b) => !b.hidden && !b.isPrimary), [bots]);
   const waitingOnYou = tasks.filter((t) => t.ownerBotId === null).length;
@@ -273,8 +293,8 @@ export function ChatView() {
             className={`no-drag flex shrink-0 items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-[13.5px] ${autoMode ? "bg-elev text-accent" : "text-muted hover:bg-elev"}`}
             title={
               autoMode
-                ? "Auto mode is on: Bots act without asking. Actions that can't be undone (rm -rf, git push, sudo) still ask. Click to turn off."
-                : "Auto mode is off: some actions wait for your approval. Click to let Bots act without asking."
+                ? "Auto mode is on: Bots act without asking for anything. Click to make them ask first again (applies to their next action)."
+                : "Auto mode is off: commands, app changes and anything that may send, publish, pay or delete wait for your approval. Click to let Bots act without asking."
             }
           >
             <Zap size={14} className={autoMode ? "fill-current" : ""} />
@@ -383,6 +403,8 @@ export function ChatView() {
           </div>
         )}
 
+        <WorkingStrip messages={messages} bots={bots} approvals={approvals} forms={secureForms} onJump={(id) => useStore.setState({ focusMessageId: id })} />
+
         {elsewhereCount > 0 && (
           <div className="mx-auto w-full max-w-[760px] px-5">
             <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-app border border-signal/40 bg-signal/10 px-3 py-1.5 text-xs">
@@ -394,13 +416,14 @@ export function ChatView() {
               {elsewhere.map((e) => (
                 <button
                   key={e.key}
-                  onClick={() => void openChat(e.conversationId, e.botId)}
-                  className="rounded-md bg-elev px-1.5 py-0.5 font-medium hover:text-accent"
-                  title={e.where ? `Open the group chat "${e.where}"` : `Open ${e.name}`}
+                  onClick={() => void openRequest(e.conversationId, e.botId, e.messageId)}
+                  className="flex min-w-0 max-w-full items-baseline whitespace-nowrap rounded-md bg-elev px-1.5 py-0.5 font-medium hover:text-accent"
+                  title={`${e.what}\n\n${e.here ? "Click to scroll to it" : e.groupName ? `Click to open the group chat "${e.groupName}" at the request` : `Click to open ${e.name}'s own chat at the request`}`}
                 >
                   {e.name}
-                  {e.where && <span className="ml-1 font-normal text-muted">in {e.where}</span>}
+                  <span className="ml-1 font-normal text-muted">{e.where}</span>
                   {e.count > 1 && <span className="ml-1 text-muted">×{e.count}</span>}
+                  <span className="ml-1.5 min-w-0 truncate font-normal text-muted/80">· {e.what}</span>
                 </button>
               ))}
             </div>

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Store } from "@grokbot/db";
 import type { ChatMessage, DriverRegistry, McpServerConfig, ToolDef } from "@grokbot/model-drivers";
 import { PROVIDERS } from "@grokbot/model-drivers";
@@ -167,7 +168,11 @@ export class AgentRuntime {
   readonly connectors: ConnectorManager;
   readonly plugins: PluginManager;
   readonly team: TeamTools;
-  private active = new Map<string, ActiveTurn>(); // botId → turn
+  private active = new Map<string, ActiveTurn>(); // botId → its latest turn (fallback when a call doesn't say which)
+  /** Every running turn by its reply id. A Bot can work in several chats at once (its own chat and a group). */
+  private turns = new Map<string, ActiveTurn & { botId: string }>();
+  /** The reply id of the turn a tool call belongs to, for the length of that call. */
+  private callTurn = new AsyncLocalStorage<string>();
   /** `${botId}\u0000${modelRef}` → until when that main model is treated as out of credit. */
   private outOfCredit = new Map<string, number>();
   /** Bot-initiated wakes since the last user message, per conversation (loop guard). */
@@ -228,7 +233,7 @@ export class AgentRuntime {
 
   /** Where a Bot's updates belong right now: the group chat it is working in, else its own chat. */
   conversationFor(botId: string): string {
-    const active = this.active.get(botId)?.conversationId;
+    const active = this.turnOf(botId)?.conversationId;
     if (active && this.opts.store.conversations.get(active)?.kind === "group") return active;
     return this.opts.store.conversations.directForBot(botId).id;
   }
@@ -773,7 +778,7 @@ export class AgentRuntime {
     const fail = (t: string): ToolCallResult => ({ isError: true, content: [{ type: "text", text: t }] });
     const from = store.bots.get(fromBotId);
     if (!from?.isPrimary) return fail("Only the Chief of Staff can invite Bots into a group.");
-    const turn = this.active.get(fromBotId);
+    const turn = this.turnOf(fromBotId);
     const conv = turn ? store.conversations.get(turn.conversationId) : undefined;
     if (!conv || conv.kind !== "group") return fail("group_invite only works while you are in a group chat.");
     const want = String((input as { bot?: string })?.bot ?? "").trim().replace(/^@/, "").toLowerCase();
@@ -827,7 +832,7 @@ export class AgentRuntime {
       if (t?.conversationId && store.conversations.get(t.conversationId)?.kind === "group") taskGroups.add(t.conversationId);
     }
     if (taskGroups.size === 1) return { group: store.conversations.get([...taskGroups][0]!)! };
-    const activeId = this.active.get(fromId)?.conversationId;
+    const activeId = this.turnOf(fromId)?.conversationId;
     const working = activeId ? store.conversations.get(activeId) : undefined;
     if (working?.kind === "group") return { group: working };
     if (opts.ask && opts.targetId) {
@@ -875,7 +880,7 @@ export class AgentRuntime {
     const resolved = this.resolveWorkGroup(from.id, { targetId: target.id, name: a.group, groupId, text: message, ask });
     if (resolved.error) return fail(resolved.error);
     const group = resolved.group;
-    const here = this.active.get(from.id)?.conversationId === group?.id;
+    const here = this.turnOf(from.id)?.conversationId === group?.id;
     if (group?.kind === "group") {
       let member = group.botIds.includes(target.id);
       if (!member && (from.isPrimary || group.botIds.includes(from.id))) member = !this.changeGroupMembers(group.id, [target.id], [], from.name).error;
@@ -941,12 +946,24 @@ export class AgentRuntime {
     return this.toolSpecs(bot).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
   }
 
-  mcpServers(botId: string): McpServerConfig[] {
-    return [{ name: "computer", url: `${this.opts.serverUrl}/mcp/${botId}` }];
+  /** The turn id rides on the URL so each tool call is matched to the chat it came from. */
+  mcpServers(botId: string, turnId?: string): McpServerConfig[] {
+    return [{ name: "computer", url: `${this.opts.serverUrl}/mcp/${botId}${turnId ? `?turn=${encodeURIComponent(turnId)}` : ""}` }];
   }
 
-  /** Single entry point for every tool call, from API drivers and from the MCP endpoint. */
-  async callTool(botId: string, name: string, input: unknown): Promise<ToolCallResult> {
+  /**
+   * The turn a Bot is in: the one this tool call came from when known, else its latest one.
+   * Matters when it works in two chats at once: approvals, files and messages land in the right one.
+   */
+  private turnOf(botId: string): ActiveTurn | undefined {
+    const id = this.callTurn.getStore();
+    const t = id ? this.turns.get(id) : undefined;
+    return t && t.botId === botId ? t : this.active.get(botId);
+  }
+
+  /** Single entry point for every tool call, from API drivers and from the MCP endpoint. `turnId` is the reply it belongs to. */
+  async callTool(botId: string, name: string, input: unknown, turnId?: string): Promise<ToolCallResult> {
+    if (turnId && this.callTurn.getStore() !== turnId) return this.callTurn.run(turnId, () => this.callTool(botId, name, input, turnId));
     if (name === "bot_message") return this.handoff(botId, input);
     if (name === "group_invite") return this.groupInvite(botId, input);
     if (name === "group_create") return this.groupCreate(botId, input);
@@ -962,7 +979,7 @@ export class AgentRuntime {
         const gate = await this.gate(botId, name, input);
         if (gate) return gate;
       }
-      const turn = this.active.get(botId);
+      const turn = this.turnOf(botId);
       return this.vault.call(bot, name, input, turn ? { conversationId: turn.conversationId, messageId: turn.messageId, signal: turn.signal, pushPart: turn.pushPart } : null);
     }
     if (this.connectors.isConnectorTool(name)) {
@@ -975,7 +992,7 @@ export class AgentRuntime {
 
   /** Runs Auto Review for a tool call; returns an error result when it may not proceed, else null. */
   private async gate(botId: string, name: string, input: unknown): Promise<ToolCallResult | null> {
-    const turn = this.active.get(botId);
+    const turn = this.turnOf(botId);
     const store = this.opts.store;
     const settings = store.settings.get();
     const conversationId = turn?.conversationId ?? store.conversations.directForBot(botId).id;
@@ -998,9 +1015,11 @@ export class AgentRuntime {
     }
 
     let messageId = turn?.messageId;
+    let orphan = false;
     if (!messageId) {
       const m = store.messages.create({ conversationId, role: "system", botId, content: "", parts: [] });
       messageId = m.id;
+      orphan = true;
       this.opts.emit({ type: "message.created", message: m });
     }
     const { approval, decided } = this.approvals.request({
@@ -1012,7 +1031,13 @@ export class AgentRuntime {
       summary: decision.summary,
       warnings: decision.warnings,
     });
-    turn?.pushPart({ type: "approval", approvalId: approval.id });
+    if (turn) turn.pushPart({ type: "approval", approvalId: approval.id });
+    else if (orphan) {
+      // Asked outside any turn: the card still needs a home in the chat, or there is nothing to click.
+      const part = { type: "approval" as const, approvalId: approval.id };
+      store.messages.update(messageId, { parts: [part] });
+      this.opts.emit({ type: "message.part", messageId, conversationId, part });
+    }
     this.opts.emit({ type: "bot.status", botId, status: "needs-attention" });
     this.opts.emit({ type: "notify", botId, conversationId, title: `${this.opts.store.bots.get(botId)?.name ?? "Bot"} needs approval`, body: decision.summary.slice(0, 160), kind: "needs-attention" });
     const result = await Promise.race([
@@ -1042,7 +1067,7 @@ export class AgentRuntime {
     // Allowed unasked because it's confined: run it with writes limited to the sandbox folder.
     const key = `${botId}:${JSON.stringify(input ?? {})}`;
     const confineTo = this.confineNext.delete(key) ? this.opts.workspaceDir : undefined;
-    return this.opts.computer.callTool(botId, name, input, { signal: this.active.get(botId)?.signal, confineTo });
+    return this.opts.computer.callTool(botId, name, input, { signal: this.turnOf(botId)?.signal, confineTo });
   }
 
   private async runTurn(ev: WakeEvent, signal: AbortSignal, release: () => void = () => undefined): Promise<Message | undefined> {
@@ -1168,7 +1193,9 @@ export class AgentRuntime {
       flush(true);
     };
 
-    this.active.set(bot.id, { conversationId: ev.conversationId, messageId: reply.id, signal, pushPart, userMessages });
+    const turn = { conversationId: ev.conversationId, messageId: reply.id, signal, pushPart, userMessages };
+    this.active.set(bot.id, turn);
+    this.turns.set(reply.id, { ...turn, botId: bot.id });
     if (mainOut) pushPart({ type: "status", text: `Using the backup model ${backupRef}: ${mainRef} ran out of credit recently.` });
     if (ev.resumed) pushPart({ type: "status", text: "Picked up again after Cadre restarted." });
 
@@ -1184,8 +1211,8 @@ export class AgentRuntime {
             system: this.buildSystemPrompt(bot, conversation),
             messages: chat,
             tools: viaMcp ? [] : this.toolDefs(bot),
-            mcpServers: viaMcp ? this.mcpServers(bot.id) : undefined,
-            executeTool: (name, input) => this.callTool(bot.id, name, input),
+            mcpServers: viaMcp ? this.mcpServers(bot.id, reply.id) : undefined,
+            executeTool: (name, input) => this.callTool(bot.id, name, input, reply.id),
             sessionId,
             cwd: this.opts.workspaceDir,
             signal,
@@ -1246,7 +1273,13 @@ export class AgentRuntime {
         errorText = null;
       }
     } finally {
-      if (this.active.get(bot.id)?.messageId === reply.id) this.active.delete(bot.id);
+      this.turns.delete(reply.id);
+      if (this.active.get(bot.id)?.messageId === reply.id) {
+        // Another chat this Bot is still working in becomes its current one.
+        const other = [...this.turns.values()].find((t) => t.botId === bot.id);
+        if (other) this.active.set(bot.id, other);
+        else this.active.delete(bot.id);
+      }
     }
 
     const stopped = signal.aborted;
@@ -1523,8 +1556,8 @@ export function sandboxPromptSection(workspaceDir: string): string {
     `Your sandbox is ${workspaceDir} (the user sees it in Finder as the Cadre folder). Inside it you may create, clone, edit, build, install and delete freely; nothing there needs approval.`,
     "Everything outside the sandbox is read-only for you: read and copy from anywhere, never change it directly.",
     `To work on one of the user's projects, copy or clone it into the sandbox first (for example: git clone ~/apps/myproject "${workspaceDir}/myproject") and work on that copy. Tell the user the path when you are done.`,
-    "shell_run runs right away without asking; while it does, macOS blocks writes outside the sandbox (reading anywhere and the internet still work). Deploys, cloud changes and publishing still ask the user.",
-    "If a tool says a folder outside the sandbox is not writable, that is expected: work in the sandbox instead of stopping. Change something outside the sandbox only when the user asks for it, and then with shell_run and outsideSandbox: true, which asks the user first.",
+    "shell_run runs right away without asking; while it does, macOS blocks writes outside the sandbox (reading anywhere and the internet still work). Deploys, cloud changes and publishing ask the user first unless Auto mode is on.",
+    "If a tool says a folder outside the sandbox is not writable, that is expected: work in the sandbox instead of stopping. Change something outside the sandbox only when the user asks for it, and then with shell_run and outsideSandbox: true (it asks the user first unless Auto mode is on).",
   ].join("\n");
 }
 

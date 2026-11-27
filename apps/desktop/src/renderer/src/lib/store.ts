@@ -183,6 +183,8 @@ interface State {
   unpin(id: string): Promise<void>;
   /** Open the chat a pin came from and scroll to the pinned message. */
   openPin(pin: Pin): Promise<void>;
+  /** Opens the chat a request is waiting in and scrolls to its card. */
+  openRequest(conversationId: string, botId: string | undefined, messageId: string): Promise<void>;
   createTask(input: { title: string; detail?: string; ownerBotId?: string | null }): Promise<void>;
   updateTask(id: string, patch: Partial<Pick<Task, "status" | "ownerBotId" | "result" | "title">>): Promise<void>;
   /** Flip between the Tidewater night and day themes (leaves "system" when used). */
@@ -194,7 +196,7 @@ interface State {
   stop(): Promise<void>;
   resetConversation(): Promise<void>;
   updateSettings(patch: Partial<AppSettings>): Promise<void>;
-  /** Auto mode = Auto Review off: Bots act without asking (can't-undo actions still ask). Turning it on also clears waiting cards that it covers. */
+  /** Auto mode = Auto Review off: Bots act without asking, for anything. Turning it on also lets every waiting card go ahead. */
   setAutoMode(on: boolean): Promise<void>;
   decideApproval(id: string, decision: ApprovalDecision): Promise<void>;
   loadRoutines(botId: string): Promise<void>;
@@ -381,6 +383,13 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  async openRequest(conversationId, botId, messageId) {
+    set({ mobileTeamOpen: false });
+    // Open the chat and wait for its messages first, or the jump would look for the card in the old chat.
+    if (get().conversation?.id !== conversationId) await get().openChat(conversationId, botId);
+    set({ focusMessageId: messageId });
+  },
+
   async openPin(pin) {
     set({ focusMessageId: pin.messageId, mobileTeamOpen: false });
     if (get().conversation?.id !== pin.conversationId) await get().openChat(pin.conversationId, pin.botId ?? undefined);
@@ -537,11 +546,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async setAutoMode(on) {
+    // Turning it on, the server also lets every waiting approval go ahead.
     await get().updateSettings({ autoReview: !on });
-    if (!on) return;
-    for (const a of Object.values(get().approvals)) {
-      if (a.status === "pending" && a.warnings.length === 0) void get().decideApproval(a.id, "allow").catch(() => {});
-    }
   },
 
   async renameGroup(id, title) {
@@ -743,7 +749,8 @@ export const useStore = create<State>((set, get) => ({
               const last = parts.at(-1);
               if (last?.type === "text") parts[parts.length - 1] = { ...last, text: last.text + e.text };
               else parts.push({ type: "text", text: e.text });
-              return { ...m, content: m.content + e.text, parts };
+              // updatedAt = when anything last happened in this reply (the "working" strip shows it).
+              return { ...m, content: m.content + e.text, parts, updatedAt: new Date().toISOString() };
             }),
           });
         }
@@ -764,11 +771,11 @@ export const useStore = create<State>((set, get) => ({
                 const last = parts.at(-1);
                 if (last?.type === "reasoning") {
                   parts[parts.length - 1] = { ...last, text: last.text + part.text };
-                  return { ...m, parts };
+                  return { ...m, parts, updatedAt: new Date().toISOString() };
                 }
               }
               parts.push(part);
-              return { ...m, parts };
+              return { ...m, parts, updatedAt: new Date().toISOString() };
             }),
           });
         }

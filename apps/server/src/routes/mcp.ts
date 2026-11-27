@@ -38,7 +38,7 @@ mcpRoute.all("/:botId", async (c) => {
       if (!parsed.success) return { isError: true, content: [{ type: "text" as const, text: `Invalid arguments for ${t.name}: ${parsed.error.message}` }] };
       args = parsed.data;
     }
-    const result = await runtime.callTool(botId, t.name, args);
+    const result = await runtime.callTool(botId, t.name, args, c.req.query("turn") || undefined);
     return {
       isError: result.isError,
       content: result.content.map((p) =>
