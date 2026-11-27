@@ -5,8 +5,8 @@ import { APPROVAL_TTL_MS, MAX_CUSTOM_RULES_PER_KIND, READ_ONLY_TOOLS, parseModel
 
 /**
  * Auto Review: decides, before every tool call, whether it runs on its own, waits for the
- * user, or is refused. Order of precedence (mirrors Grok Bot's docs):
- *   built-in safety checks → user "Ask first" rules → user "Allow automatically" rules →
+ * user, or is refused. Auto mode (Auto Review off) runs everything without asking. Otherwise,
+ * in order: built-in safety checks → user "Ask first" rules → user "Allow automatically" rules →
  *   read-only tools → optional review model → default policy.
  * Only the user's own messages count as instructions; tool output never does.
  */
@@ -69,6 +69,21 @@ export function hasOutsideEffects(command: string): boolean {
 
 const OUTBOUND_HINTS = /\b(send|submit|publish|post|pay|purchase|buy|checkout|order|delete|remove|unsubscribe|transfer|confirm)\b/i;
 
+/**
+ * A click on a Send / Publish / Pay / Delete style control, or Enter pressed after typing such a word.
+ * Only the values count, not the field names: `"submit": true` just means "press Enter", and typing
+ * "backstage-publish" into a search box sends nothing.
+ */
+export function looksOutbound(toolName: string, input: unknown): boolean {
+  const i = (input ?? {}) as Record<string, unknown>;
+  if (toolName === "browser_click") return OUTBOUND_HINTS.test([i.text, i.ref, i.selector, i.name, i.label].filter((v) => typeof v === "string").join(" "));
+  if (toolName === "browser_type") return i.submit === true && typeof i.text === "string" && OUTBOUND_WORD.test(i.text);
+  return false;
+}
+
+/** The same words standing alone ("send it"), not inside a name like "backstage-publish" or "post_id". */
+const OUTBOUND_WORD = /(?<![\w\-./])(send|submit|publish|post|pay|purchase|buy|checkout|order|delete|remove|unsubscribe|transfer|confirm)(?![\w\-./])/i;
+
 export function summarise(toolName: string, input: unknown): string {
   const i = (input ?? {}) as Record<string, unknown>;
   const s = (v: unknown, n = 80) => String(v ?? "").replace(/\s+/g, " ").slice(0, n);
@@ -107,17 +122,17 @@ export async function review(r: ReviewInput): Promise<ReviewDecision> {
   const summary = summarise(r.toolName, r.input);
   const warnings: string[] = [];
 
-  // 1. Built-in safety checks always apply.
+  // Auto mode: the user chose to let Bots act without asking, so nothing asks, risky or not.
+  // The settings are read again on every tool call, so switching mode mid-task applies to the next action.
+  if (!r.settings.autoReview) return { action: "allow", summary, warnings, rule: "Auto mode" };
+
+  // 1. Built-in safety checks.
   if (r.toolName === "shell_run") {
     const cmd = String((r.input as { command?: string })?.command ?? "");
     for (const d of DANGEROUS_SHELL) if (d.re.test(cmd) && !warnings.includes(d.warning)) warnings.push(d.warning);
   }
-  if ((r.toolName === "browser_click" || r.toolName === "browser_type") && OUTBOUND_HINTS.test(JSON.stringify(r.input ?? {}))) {
-    warnings.push("This may send, publish, pay or delete something");
-  }
+  if (looksOutbound(r.toolName, r.input)) warnings.push("This may send, publish, pay or delete something");
   if (warnings.length) return { action: "ask", summary, warnings, rule: "Built-in safety check" };
-
-  if (!r.settings.autoReview) return { action: "allow", summary, warnings, rule: "Auto Review off" };
 
   // 2. "Ask first" wins over "Allow automatically".
   const ask = r.rules.find((x) => x.kind === "ask" && ruleMatches(x, r.toolName, r.input));
@@ -203,6 +218,10 @@ export class ApprovalGate {
     private emit: (e: ServerEvent) => void,
   ) {
     for (const a of store.approvals.expireStale()) emit({ type: "approval.resolved", approval: a });
+    // Timers don't survive the Mac sleeping or Cadre restarting mid-wait: sweep for overdue cards every minute too.
+    setInterval(() => {
+      for (const a of store.approvals.expireStale()) this.finish(a);
+    }, 60_000).unref();
     // "Always allow" used to save the same rule again each time; keep one of each.
     const removed = store.rules.removeDuplicates();
     if (removed) console.log(`[cadre] removed ${removed} repeated custom rule(s)`);
@@ -267,6 +286,19 @@ export class ApprovalGate {
     const resolved = this.store.approvals.resolve(id, decision === "deny" ? "denied" : "allowed", rule);
     if (resolved) this.finish(resolved);
     return resolved;
+  }
+
+  /** Auto mode was switched on: everything still waiting goes ahead, as if the user had clicked Allow. */
+  allowAllPending(): Approval[] {
+    const done: Approval[] = [];
+    for (const a of this.store.approvals.list("pending")) {
+      const resolved = this.store.approvals.resolve(a.id, "allowed", "Auto mode turned on");
+      if (resolved) {
+        this.finish(resolved);
+        done.push(resolved);
+      }
+    }
+    return done;
   }
 
   pendingFor(botId: string): Approval[] {

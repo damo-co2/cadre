@@ -92,16 +92,14 @@ export function ApprovalCard({ approvalId }: { approvalId: string }) {
                 Always allow
               </button>
             )}
-            {approval.warnings.length === 0 && (
-              <button
-                onClick={() => void setAutoMode(true)}
-                disabled={busy !== null}
-                className="ml-auto flex items-center gap-1 rounded-app px-2 py-1.5 text-xs text-muted hover:bg-sunken hover:text-fg disabled:opacity-40"
-                title="Allow this and stop asking: Bots act on their own. Actions that can't be undone (rm -rf, git push, sudo) still ask."
-              >
-                <Zap size={12} /> Turn on auto mode
-              </button>
-            )}
+            <button
+              onClick={() => void setAutoMode(true)}
+              disabled={busy !== null}
+              className="ml-auto flex items-center gap-1 rounded-app px-2 py-1.5 text-xs text-muted hover:bg-sunken hover:text-fg disabled:opacity-40"
+              title="Allow this and everything else waiting, and stop asking: Bots act on their own until you turn Auto off."
+            >
+              <Zap size={12} /> Turn on auto mode
+            </button>
             <button
               onClick={() => void act("deny")}
               disabled={busy !== null}

@@ -126,7 +126,7 @@ function GeneralPane() {
             className="w-56 rounded-app border border-line bg-sunken px-2 py-1 text-[14px] outline-none"
           />
         </Row>
-        <Row label="Auto mode" hint="Bots act without asking. Actions that can't be undone (rm -rf, git push, sudo…) still ask. Also the Auto button at the top of every chat.">
+        <Row label="Auto mode" hint="Bots act without asking for anything, including actions that can't be undone. Turn it off to approve commands, app changes and sends yourself. Also the Auto button at the top of every chat.">
           <Toggle value={!settings.autoReview} onChange={(v) => void useStore.getState().setAutoMode(v)} />
         </Row>
         <Row

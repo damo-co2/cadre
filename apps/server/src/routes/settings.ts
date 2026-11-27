@@ -32,5 +32,10 @@ settingsRoutes.get("/default-model", (c) => {
 settingsRoutes.put("/", async (c) => {
   const parsed = updateSettingsSchema.safeParse(await c.req.json());
   if (!parsed.success) return c.json({ error: parsed.error.message }, 400);
-  return c.json(c.get("store").settings.update(parsed.data));
+  const store = c.get("store");
+  const wasAuto = !store.settings.get().autoReview;
+  const updated = store.settings.update(parsed.data);
+  // Turning Auto mode on lets everything that is waiting for approval go ahead, mid-task included.
+  if (!wasAuto && !updated.autoReview) c.get("runtime").approvals.allowAllPending();
+  return c.json(updated);
 });
